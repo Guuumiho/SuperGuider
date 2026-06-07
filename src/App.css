@@ -297,13 +297,15 @@ textarea:focus {
 }
 
 .soft-list,
-.record-list {
+.record-list,
+.context-list {
   margin: 16px 0 0;
   padding: 0;
   list-style: none;
 }
 
-.record-list {
+.record-list,
+.context-list {
   display: grid;
   gap: 10px;
 }
@@ -354,6 +356,36 @@ textarea:focus {
   grid-column: 1 / -1;
   color: #9a5d19;
   font-style: normal;
+}
+
+.context-list li {
+  display: grid;
+  gap: 8px;
+  border-radius: 20px;
+  padding: 14px;
+  background: linear-gradient(135deg, rgba(31, 54, 46, 0.07), rgba(240, 182, 77, 0.12));
+}
+
+.context-list p {
+  margin: 0;
+  font-weight: 800;
+}
+
+.context-list span,
+.context-list small {
+  color: rgba(24, 35, 31, 0.62);
+}
+
+.context-list em {
+  color: #9b3827;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.context-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .orb-wrap {

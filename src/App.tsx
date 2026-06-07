@@ -78,6 +78,7 @@ type StoredAppState = {
   task: Task | null;
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
+  contextSamples: ContextSampleRecord[];
   summary: TaskSummary | null;
 };
 
@@ -94,6 +95,15 @@ type ScreenshotCaptureResult = {
   source: string;
   width: number;
   height: number;
+};
+
+type ContextSampleRecord = {
+  recordedAt: string;
+  trigger: "manual_button" | InputEventRecord["source"];
+  taskGoal: string;
+  window: ForegroundWindowSnapshot | null;
+  screenshot: ScreenshotCaptureResult | null;
+  error?: string;
 };
 
 const storageKey = "superguider-demo-state";
@@ -191,6 +201,7 @@ function loadStoredState(): StoredAppState {
       task: null,
       notificationRecords: [],
       inputEventRecords: [],
+      contextSamples: [],
       summary: null,
     };
   }
@@ -203,6 +214,7 @@ function loadStoredState(): StoredAppState {
         task: null,
         notificationRecords: [],
         inputEventRecords: [],
+        contextSamples: [],
         summary: null,
       };
     }
@@ -213,6 +225,7 @@ function loadStoredState(): StoredAppState {
       task: parsed.task ?? null,
       notificationRecords: parsed.notificationRecords ?? [],
       inputEventRecords: parsed.inputEventRecords ?? [],
+      contextSamples: parsed.contextSamples ?? [],
       summary: parsed.summary ?? null,
     };
   } catch {
@@ -221,6 +234,7 @@ function loadStoredState(): StoredAppState {
       task: null,
       notificationRecords: [],
       inputEventRecords: [],
+      contextSamples: [],
       summary: null,
     };
   }
@@ -247,6 +261,9 @@ function App() {
   const [inputEventRecords, setInputEventRecords] = useState<InputEventRecord[]>(
     storedState.inputEventRecords,
   );
+  const [contextSamples, setContextSamples] = useState<ContextSampleRecord[]>(
+    storedState.contextSamples,
+  );
   const [summary, setSummary] = useState<TaskSummary | null>(
     storedState.summary,
   );
@@ -270,10 +287,18 @@ function App() {
       task,
       notificationRecords,
       inputEventRecords,
+      contextSamples,
       summary,
     };
     window.localStorage.setItem(storageKey, JSON.stringify(stateToStore));
-  }, [settings, task, notificationRecords, inputEventRecords, summary]);
+  }, [
+    settings,
+    task,
+    notificationRecords,
+    inputEventRecords,
+    contextSamples,
+    summary,
+  ]);
 
   useEffect(() => {
     let disposed = false;
@@ -286,7 +311,7 @@ function App() {
 
       recordInputEvent(event.payload.event_type, event.payload.source);
       if (event.payload.event_type === "screenshot") {
-        void captureScreenshotSnapshot();
+        void captureContextSample(event.payload.source);
       }
     }).then((unlisten) => {
       if (disposed) {
@@ -304,7 +329,7 @@ function App() {
 
       if (event.ctrlKey && event.key.toLowerCase() === "c") {
         recordInputEvent("screenshot", "frontend_window");
-        void captureScreenshotSnapshot();
+        void captureContextSample("frontend_window");
       }
     }
 
@@ -425,6 +450,7 @@ function App() {
     setActiveNotification(null);
     setNotificationRecords([]);
     setInputEventRecords([]);
+    setContextSamples([]);
     setSummary(null);
   }
 
@@ -440,15 +466,43 @@ function App() {
     }
   }
 
-  async function captureScreenshotSnapshot() {
+  async function captureContextSample(
+    trigger: ContextSampleRecord["trigger"] = "manual_button",
+  ) {
     try {
+      setWindowSnapshotError("");
       setScreenshotError("");
-      const result = await invoke<ScreenshotCaptureResult>(
-        "capture_screenshot_snapshot",
-      );
-      setScreenshotResult(result);
+      const [snapshot, screenshot] = await Promise.all([
+        invoke<ForegroundWindowSnapshot>("get_foreground_window_snapshot"),
+        invoke<ScreenshotCaptureResult>("capture_screenshot_snapshot"),
+      ]);
+
+      setWindowSnapshot(snapshot);
+      setScreenshotResult(screenshot);
+      setContextSamples((records) => [
+        {
+          recordedAt: nowLabel(),
+          trigger,
+          taskGoal: task?.goal ?? "未开始任务",
+          window: snapshot,
+          screenshot,
+        },
+        ...records,
+      ]);
     } catch (error) {
-      setScreenshotError(String(error));
+      const message = String(error);
+      setScreenshotError(message);
+      setContextSamples((records) => [
+        {
+          recordedAt: nowLabel(),
+          trigger,
+          taskGoal: task?.goal ?? "未开始任务",
+          window: null,
+          screenshot: null,
+          error: message,
+        },
+        ...records,
+      ]);
     }
   }
 
@@ -490,6 +544,7 @@ function App() {
             triggerScenario={triggerScenario}
             notificationRecords={notificationRecords}
             inputEventRecords={inputEventRecords}
+            contextSamples={contextSamples}
             summary={summary}
             endTask={endTask}
             windowSnapshot={windowSnapshot}
@@ -497,7 +552,7 @@ function App() {
             refreshWindowSnapshot={refreshWindowSnapshot}
             screenshotResult={screenshotResult}
             screenshotError={screenshotError}
-            captureScreenshotSnapshot={captureScreenshotSnapshot}
+            captureContextSample={captureContextSample}
           />
         ) : (
           <SettingsPage
@@ -530,6 +585,7 @@ function StatusPage({
   triggerScenario,
   notificationRecords,
   inputEventRecords,
+  contextSamples,
   summary,
   endTask,
   windowSnapshot,
@@ -537,7 +593,7 @@ function StatusPage({
   refreshWindowSnapshot,
   screenshotResult,
   screenshotError,
-  captureScreenshotSnapshot,
+  captureContextSample,
 }: {
   mode: AppMode;
   task: Task | null;
@@ -548,6 +604,7 @@ function StatusPage({
   triggerScenario: (scenario: NotificationScenario) => void;
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
+  contextSamples: ContextSampleRecord[];
   summary: TaskSummary | null;
   endTask: () => void;
   windowSnapshot: ForegroundWindowSnapshot | null;
@@ -555,7 +612,7 @@ function StatusPage({
   refreshWindowSnapshot: () => void;
   screenshotResult: ScreenshotCaptureResult | null;
   screenshotError: string;
-  captureScreenshotSnapshot: () => void;
+  captureContextSample: () => void;
 }) {
   if (!task) {
     return (
@@ -730,12 +787,12 @@ function StatusPage({
 
       <section className="card">
         <p className="eyebrow">截图能力入口</p>
-        <h2>内存截图捕获</h2>
+        <h2>上下文采样</h2>
         <p className="muted">
-          当前会调用 Rust 在内存中抓取屏幕并立即释放，不保存图片文件。
+          当前会同时读取前台窗口和内存截图结果，形成一条 AI 输入骨架；截图不保存为图片文件。
         </p>
-        <button className="primary-button" onClick={captureScreenshotSnapshot}>
-          捕获一次屏幕快照
+        <button className="primary-button" onClick={captureContextSample}>
+          采样当前上下文
         </button>
         {screenshotResult && (
           <dl className="snapshot-list">
@@ -760,6 +817,40 @@ function StatusPage({
           </dl>
         )}
         {screenshotError && <p className="error-text">{screenshotError}</p>}
+      </section>
+
+      <section className="card wide">
+        <p className="eyebrow">上下文采样记录</p>
+        <h2>最近一次 AI 输入骨架</h2>
+        {contextSamples.length === 0 ? (
+          <p className="muted">
+            还没有采样记录。点击“采样当前上下文”或按 Ctrl+C 试一次。
+          </p>
+        ) : (
+          <ul className="context-list">
+            {contextSamples.slice(0, 3).map((sample, index) => (
+              <li key={`${sample.recordedAt}-${index}`}>
+                <div className="context-head">
+                  <strong>{sample.trigger}</strong>
+                  <small>{sample.recordedAt}</small>
+                </div>
+                <p>{sample.taskGoal}</p>
+                {sample.window && (
+                  <span>
+                    {sample.window.app_name} / {sample.window.window_title}
+                  </span>
+                )}
+                {sample.screenshot && (
+                  <span>
+                    {sample.screenshot.status} · {sample.screenshot.width} x{" "}
+                    {sample.screenshot.height}
+                  </span>
+                )}
+                {sample.error && <em>{sample.error}</em>}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="card">
