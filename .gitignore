@@ -1,0 +1,60 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+dist-ssr/
+
+# Tauri / Rust build output
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Local env and secrets
+.env
+.env.*
+*.local
+
+# SuperGuider local runtime data
+data/
+screenshots/
+*.sqlite
+*.sqlite3
+*.db
+
+# Local-only planning and development fixtures
+docs/
+docs/mocks/
+mocks/
+fixtures/
+*.fixture.json
+*.mock.json
+
+# Local development notes
+notes/
+scratch/
+TODO.local.md
+
+# Editor directories and files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS / temporary files
+*.tmp
+*.temp
+~$*
