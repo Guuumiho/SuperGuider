@@ -1,6 +1,12 @@
 use serde::Serialize;
 use std::path::Path;
 
+#[derive(Clone, Serialize)]
+struct GlobalInputEvent {
+    event_type: String,
+    source: String,
+}
+
 #[derive(Serialize)]
 struct ForegroundWindowSnapshot {
     app_name: String,
@@ -288,6 +294,10 @@ fn screenshot_result(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            start_global_input_listener(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_foreground_window_snapshot,
             capture_screenshot_snapshot
@@ -295,3 +305,78 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(windows)]
+fn start_global_input_listener(app_handle: tauri::AppHandle) {
+    use std::sync::mpsc;
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_RETURN,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, GetMessageW, SetWindowsHookExW, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
+        WM_KEYDOWN, WM_SYSKEYDOWN,
+    };
+
+    static GLOBAL_INPUT_SENDER: OnceLock<mpsc::Sender<GlobalInputEvent>> = OnceLock::new();
+
+    unsafe extern "system" fn keyboard_hook(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if code >= 0 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN) {
+            let keyboard = *(lparam.0 as *const KBDLLHOOKSTRUCT);
+            let event_type = if keyboard.vkCode == VK_RETURN.0 as u32 {
+                Some("enter")
+            } else if keyboard.vkCode == b'C' as u32 && is_control_pressed() {
+                Some("copy")
+            } else {
+                None
+            };
+
+            if let (Some(event_type), Some(sender)) = (event_type, GLOBAL_INPUT_SENDER.get()) {
+                let _ = sender.send(GlobalInputEvent {
+                    event_type: event_type.to_string(),
+                    source: "windows_global_keyboard_hook".to_string(),
+                });
+            }
+        }
+
+        CallNextHookEx(None, code, wparam, lparam)
+    }
+
+    unsafe fn is_control_pressed() -> bool {
+        const KEY_PRESSED_MASK: i16 = i16::MIN;
+        GetAsyncKeyState(VK_CONTROL.0 as i32) & KEY_PRESSED_MASK != 0
+            || GetAsyncKeyState(VK_LCONTROL.0 as i32) & KEY_PRESSED_MASK != 0
+            || GetAsyncKeyState(VK_RCONTROL.0 as i32) & KEY_PRESSED_MASK != 0
+    }
+
+    let (sender, receiver) = mpsc::channel::<GlobalInputEvent>();
+    let _ = GLOBAL_INPUT_SENDER.set(sender);
+
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+
+        for event in receiver {
+            let _ = app_handle.emit("superguider://global-input", event);
+        }
+    });
+
+    std::thread::spawn(move || unsafe {
+        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0) {
+            Ok(hook) => hook,
+            Err(_) => return,
+        };
+
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).as_bool() {}
+
+        let _ = hook;
+    });
+}
+
+#[cfg(not(windows))]
+fn start_global_input_listener(_app_handle: tauri::AppHandle) {}

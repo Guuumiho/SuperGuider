@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type Page = "status" | "settings";
@@ -57,7 +58,12 @@ type NotificationRecord = {
 type InputEventRecord = {
   eventType: "enter" | "copy";
   recordedAt: string;
-  source: "frontend_window";
+  source: "frontend_window" | "windows_global_keyboard_hook";
+};
+
+type GlobalInputEvent = {
+  event_type: InputEventRecord["eventType"];
+  source: InputEventRecord["source"];
 };
 
 type Settings = {
@@ -270,13 +276,34 @@ function App() {
   }, [settings, task, notificationRecords, inputEventRecords, summary]);
 
   useEffect(() => {
+    let disposed = false;
+    let unlistenGlobalInput: (() => void) | null = null;
+
+    listen<GlobalInputEvent>("superguider://global-input", (event) => {
+      if (disposed) {
+        return;
+      }
+
+      recordInputEvent(event.payload.event_type, event.payload.source);
+      if (event.payload.event_type === "copy" && task) {
+        triggerScenario(notificationScenarios.stuck);
+      }
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
+
+      unlistenGlobalInput = unlisten;
+    });
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Enter") {
-        recordInputEvent("enter");
+        recordInputEvent("enter", "frontend_window");
       }
 
       if (event.ctrlKey && event.key.toLowerCase() === "c") {
-        recordInputEvent("copy");
+        recordInputEvent("copy", "frontend_window");
         if (task) {
           triggerScenario(notificationScenarios.stuck);
         }
@@ -284,7 +311,11 @@ function App() {
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      disposed = true;
+      unlistenGlobalInput?.();
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [task]);
 
   useEffect(() => {
@@ -349,12 +380,15 @@ function App() {
     ]);
   }
 
-  function recordInputEvent(eventType: InputEventRecord["eventType"]) {
+  function recordInputEvent(
+    eventType: InputEventRecord["eventType"],
+    source: InputEventRecord["source"],
+  ) {
     setInputEventRecords((records) => [
       {
         eventType,
         recordedAt: nowLabel(),
-        source: "frontend_window",
+        source,
       },
       ...records,
     ]);
@@ -677,9 +711,9 @@ function StatusPage({
 
       <section className="card">
         <p className="eyebrow">输入事件</p>
-        <h2>窗口内 Enter / Ctrl+C</h2>
+        <h2>全局 Enter / Ctrl+C</h2>
         <p className="muted">
-          当前是前端窗口内监听，用来先验证事件记录。Ctrl+C 会触发卡住场景。
+          当前优先使用 Windows 全局键盘监听，前端窗口监听保留为兜底。Ctrl+C 会触发卡住场景。
         </p>
         {inputEventRecords.length === 0 ? (
           <p className="muted">还没有输入事件。</p>
