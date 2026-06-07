@@ -14,6 +14,8 @@ struct ScreenshotCaptureResult {
     status: String,
     reason: String,
     source: String,
+    width: u32,
+    height: u32,
 }
 
 #[tauri::command]
@@ -23,14 +25,7 @@ fn get_foreground_window_snapshot() -> ForegroundWindowSnapshot {
 
 #[tauri::command]
 fn capture_screenshot_snapshot() -> ScreenshotCaptureResult {
-    // This reserves the command boundary for the screenshot pipeline.
-    // Real capture will be added after foreground window and input signals are stable.
-    ScreenshotCaptureResult {
-        status: "not_implemented".to_string(),
-        reason: "Screenshot capture command is wired, but real capture is not implemented yet."
-            .to_string(),
-        source: "rust_placeholder".to_string(),
-    }
+    platform_capture_screenshot_snapshot()
 }
 
 #[cfg(windows)]
@@ -75,6 +70,125 @@ fn platform_foreground_window_snapshot() -> ForegroundWindowSnapshot {
     fallback_snapshot(
         "Foreground window reading is only implemented on Windows.",
         "unsupported_platform",
+    )
+}
+
+#[cfg(windows)]
+fn platform_capture_screenshot_snapshot() -> ScreenshotCaptureResult {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetWindowDC,
+        ReleaseDC, SelectObject, SRCCOPY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetDesktopWindow, GetWindowRect};
+
+    unsafe {
+        let desktop_window = GetDesktopWindow();
+        let mut rect = RECT::default();
+        if GetWindowRect(desktop_window, &mut rect).is_err() {
+            return screenshot_result(
+                "failed",
+                "Could not read desktop bounds.",
+                "windows_gdi_get_window_rect_failed",
+                0,
+                0,
+            );
+        }
+
+        let width = (rect.right - rect.left).max(0) as u32;
+        let height = (rect.bottom - rect.top).max(0) as u32;
+        if width == 0 || height == 0 {
+            return screenshot_result(
+                "failed",
+                "Desktop bounds are empty.",
+                "windows_gdi_empty_bounds",
+                width,
+                height,
+            );
+        }
+
+        let screen_dc = GetWindowDC(None);
+        if screen_dc.is_invalid() {
+            return screenshot_result(
+                "failed",
+                "Could not acquire screen device context.",
+                "windows_gdi_get_dc_failed",
+                width,
+                height,
+            );
+        }
+
+        let memory_dc = CreateCompatibleDC(Some(screen_dc));
+        if memory_dc.is_invalid() {
+            let _ = ReleaseDC(None, screen_dc);
+            return screenshot_result(
+                "failed",
+                "Could not create compatible memory device context.",
+                "windows_gdi_create_dc_failed",
+                width,
+                height,
+            );
+        }
+
+        let bitmap = CreateCompatibleBitmap(screen_dc, width as i32, height as i32);
+        if bitmap.is_invalid() {
+            let _ = DeleteDC(memory_dc);
+            let _ = ReleaseDC(None, screen_dc);
+            return screenshot_result(
+                "failed",
+                "Could not create compatible bitmap.",
+                "windows_gdi_create_bitmap_failed",
+                width,
+                height,
+            );
+        }
+
+        let previous_object = SelectObject(memory_dc, bitmap.into());
+        let copied = BitBlt(
+            memory_dc,
+            0,
+            0,
+            width as i32,
+            height as i32,
+            Some(screen_dc),
+            rect.left,
+            rect.top,
+            SRCCOPY,
+        );
+
+        let _ = SelectObject(memory_dc, previous_object);
+        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteDC(memory_dc);
+        let _ = ReleaseDC(None, screen_dc);
+
+        if copied.is_err() {
+            return screenshot_result(
+                "failed",
+                "Screen pixels could not be copied into memory.",
+                "windows_gdi_bitblt_failed",
+                width,
+                height,
+            );
+        }
+
+        screenshot_result(
+            "captured",
+            "Screenshot was captured in memory and discarded without saving.",
+            "windows_gdi_memory_only",
+            width,
+            height,
+        )
+    }
+}
+
+#[cfg(not(windows))]
+fn platform_capture_screenshot_snapshot() -> ScreenshotCaptureResult {
+    screenshot_result(
+        "unsupported",
+        "Screenshot capture is only implemented on Windows.",
+        "unsupported_platform",
+        0,
+        0,
     )
 }
 
@@ -151,6 +265,22 @@ fn fallback_snapshot(window_title: &str, source: &str) -> ForegroundWindowSnapsh
         process_name: "unknown".to_string(),
         window_title: window_title.to_string(),
         source: source.to_string(),
+    }
+}
+
+fn screenshot_result(
+    status: &str,
+    reason: &str,
+    source: &str,
+    width: u32,
+    height: u32,
+) -> ScreenshotCaptureResult {
+    ScreenshotCaptureResult {
+        status: status.to_string(),
+        reason: reason.to_string(),
+        source: source.to_string(),
+        width,
+        height,
     }
 }
 

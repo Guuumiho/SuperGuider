@@ -86,6 +86,8 @@ type ScreenshotCaptureResult = {
   status: string;
   reason: string;
   source: string;
+  width: number;
+  height: number;
 };
 
 const storageKey = "superguider-demo-state";
@@ -716,6 +718,12 @@ function StatusPage({
             <div>
               <dt>来源</dt>
               <dd>{screenshotResult.source}</dd>
+            </div>
+            <div>
+              <dt>尺寸</dt>
+              <dd>
+                {screenshotResult.width} x {screenshotResult.height}
+              </dd>
             </div>
           </dl>
         )}
