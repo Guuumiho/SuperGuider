@@ -698,12 +698,12 @@ function StatusPage({
 
       <section className="card">
         <p className="eyebrow">截图能力入口</p>
-        <h2>截图 command 占位</h2>
+        <h2>内存截图捕获</h2>
         <p className="muted">
-          当前只验证 TypeScript 能调用 Rust 截图入口，真实截图会在下一步替换。
+          当前会调用 Rust 在内存中抓取屏幕并立即释放，不保存图片文件。
         </p>
         <button className="primary-button" onClick={captureScreenshotSnapshot}>
-          调用截图入口
+          捕获一次屏幕快照
         </button>
         {screenshotResult && (
           <dl className="snapshot-list">
