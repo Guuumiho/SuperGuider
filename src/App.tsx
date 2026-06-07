@@ -114,6 +114,7 @@ type LocalAnalysisResult = {
   notify_type: string;
   body: string;
   basis: string;
+  button: NotifyButton;
 };
 
 const storageKey = "superguider-demo-state";
@@ -213,12 +214,39 @@ function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult 
       notify_type: "none",
       body: "这次上下文采样失败，先不打扰用户。",
       basis: sample.error,
+      button: "none",
     };
   }
 
   const appName = sample.window?.app_name ?? "未知应用";
   const windowTitle = sample.window?.window_title ?? "未知窗口";
   const screenshotStatus = sample.screenshot?.status ?? "unknown";
+  const surfaceText = `${appName} ${windowTitle}`.toLowerCase();
+  const distractionKeywords = [
+    "bilibili",
+    "youtube",
+    "douyin",
+    "抖音",
+    "游戏",
+    "视频",
+    "直播",
+    "steam",
+  ];
+  const looksDistracting = distractionKeywords.some((keyword) =>
+    surfaceText.includes(keyword),
+  );
+
+  if (sample.taskGoal !== "未开始任务" && looksDistracting) {
+    return {
+      recordedAt: nowLabel(),
+      scenario: "local_off_track_detected",
+      should_notify: true,
+      notify_type: "off_track",
+      body: `当前窗口看起来可能和任务目标关系不大：${appName} / ${windowTitle}。如果你正在执行「${sample.taskGoal}」，可以先回到任务主线。`,
+      basis: `${appName} / ${windowTitle} / screenshot:${screenshotStatus}`,
+      button: "actually_related",
+    };
+  }
 
   return {
     recordedAt: nowLabel(),
@@ -227,6 +255,19 @@ function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult 
     notify_type: "none",
     body: "已完成一次上下文采样。本地分析层暂不主动提示，只记录判断依据。",
     basis: `${appName} / ${windowTitle} / screenshot:${screenshotStatus}`,
+    button: "none",
+  };
+}
+
+function notificationFromAnalysis(
+  result: LocalAnalysisResult,
+): NotificationScenario {
+  return {
+    scenario: result.scenario,
+    should_notify: result.should_notify,
+    notify_type: result.notify_type,
+    body: result.body,
+    button: result.button,
   };
 }
 
@@ -536,21 +577,25 @@ function App() {
         sample,
         ...records,
       ]);
-      setAnalysisResults((records) => [analyzeContextSample(sample), ...records]);
+      const analysis = analyzeContextSample(sample);
+      setAnalysisResults((records) => [analysis, ...records]);
+      triggerScenario(notificationFromAnalysis(analysis));
     } catch (error) {
       const message = String(error);
       setScreenshotError(message);
+      const sample: ContextSampleRecord = {
+        recordedAt: nowLabel(),
+        trigger,
+        taskGoal: task?.goal ?? "未开始任务",
+        window: null,
+        screenshot: null,
+        error: message,
+      };
       setContextSamples((records) => [
-        {
-          recordedAt: nowLabel(),
-          trigger,
-          taskGoal: task?.goal ?? "未开始任务",
-          window: null,
-          screenshot: null,
-          error: message,
-        },
+        sample,
         ...records,
       ]);
+      setAnalysisResults((records) => [analyzeContextSample(sample), ...records]);
     }
   }
 
