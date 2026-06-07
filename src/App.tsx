@@ -56,7 +56,7 @@ type NotificationRecord = {
 };
 
 type InputEventRecord = {
-  eventType: "enter" | "copy";
+  eventType: "enter" | "screenshot";
   recordedAt: string;
   source: "frontend_window" | "windows_global_keyboard_hook";
 };
@@ -285,8 +285,8 @@ function App() {
       }
 
       recordInputEvent(event.payload.event_type, event.payload.source);
-      if (event.payload.event_type === "copy" && task) {
-        triggerScenario(notificationScenarios.stuck);
+      if (event.payload.event_type === "screenshot") {
+        void captureScreenshotSnapshot();
       }
     }).then((unlisten) => {
       if (disposed) {
@@ -303,10 +303,8 @@ function App() {
       }
 
       if (event.ctrlKey && event.key.toLowerCase() === "c") {
-        recordInputEvent("copy", "frontend_window");
-        if (task) {
-          triggerScenario(notificationScenarios.stuck);
-        }
+        recordInputEvent("screenshot", "frontend_window");
+        void captureScreenshotSnapshot();
       }
     }
 
@@ -713,7 +711,7 @@ function StatusPage({
         <p className="eyebrow">输入事件</p>
         <h2>全局 Enter / Ctrl+C</h2>
         <p className="muted">
-          当前优先使用 Windows 全局键盘监听，前端窗口监听保留为兜底。Ctrl+C 会触发卡住场景。
+          当前优先使用 Windows 全局键盘监听，前端窗口监听保留为兜底。Ctrl+C 会触发一次内存截图。
         </p>
         {inputEventRecords.length === 0 ? (
           <p className="muted">还没有输入事件。</p>

@@ -331,7 +331,7 @@ fn start_global_input_listener(app_handle: tauri::AppHandle) {
             let event_type = if keyboard.vkCode == VK_RETURN.0 as u32 {
                 Some("enter")
             } else if keyboard.vkCode == b'C' as u32 && is_control_pressed() {
-                Some("copy")
+                Some("screenshot")
             } else {
                 None
             };
