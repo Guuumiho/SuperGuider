@@ -79,6 +79,7 @@ type StoredAppState = {
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
   contextSamples: ContextSampleRecord[];
+  analysisResults: LocalAnalysisResult[];
   summary: TaskSummary | null;
 };
 
@@ -104,6 +105,15 @@ type ContextSampleRecord = {
   window: ForegroundWindowSnapshot | null;
   screenshot: ScreenshotCaptureResult | null;
   error?: string;
+};
+
+type LocalAnalysisResult = {
+  recordedAt: string;
+  scenario: string;
+  should_notify: boolean;
+  notify_type: string;
+  body: string;
+  basis: string;
 };
 
 const storageKey = "superguider-demo-state";
@@ -194,6 +204,32 @@ function nowLabel() {
   });
 }
 
+function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult {
+  if (sample.error) {
+    return {
+      recordedAt: nowLabel(),
+      scenario: "context_sample_failed",
+      should_notify: false,
+      notify_type: "none",
+      body: "这次上下文采样失败，先不打扰用户。",
+      basis: sample.error,
+    };
+  }
+
+  const appName = sample.window?.app_name ?? "未知应用";
+  const windowTitle = sample.window?.window_title ?? "未知窗口";
+  const screenshotStatus = sample.screenshot?.status ?? "unknown";
+
+  return {
+    recordedAt: nowLabel(),
+    scenario: "context_sample_checked",
+    should_notify: false,
+    notify_type: "none",
+    body: "已完成一次上下文采样。本地分析层暂不主动提示，只记录判断依据。",
+    basis: `${appName} / ${windowTitle} / screenshot:${screenshotStatus}`,
+  };
+}
+
 function loadStoredState(): StoredAppState {
   if (typeof window === "undefined") {
     return {
@@ -202,6 +238,7 @@ function loadStoredState(): StoredAppState {
       notificationRecords: [],
       inputEventRecords: [],
       contextSamples: [],
+      analysisResults: [],
       summary: null,
     };
   }
@@ -215,6 +252,7 @@ function loadStoredState(): StoredAppState {
         notificationRecords: [],
         inputEventRecords: [],
         contextSamples: [],
+        analysisResults: [],
         summary: null,
       };
     }
@@ -226,6 +264,7 @@ function loadStoredState(): StoredAppState {
       notificationRecords: parsed.notificationRecords ?? [],
       inputEventRecords: parsed.inputEventRecords ?? [],
       contextSamples: parsed.contextSamples ?? [],
+      analysisResults: parsed.analysisResults ?? [],
       summary: parsed.summary ?? null,
     };
   } catch {
@@ -235,6 +274,7 @@ function loadStoredState(): StoredAppState {
       notificationRecords: [],
       inputEventRecords: [],
       contextSamples: [],
+      analysisResults: [],
       summary: null,
     };
   }
@@ -264,6 +304,9 @@ function App() {
   const [contextSamples, setContextSamples] = useState<ContextSampleRecord[]>(
     storedState.contextSamples,
   );
+  const [analysisResults, setAnalysisResults] = useState<LocalAnalysisResult[]>(
+    storedState.analysisResults,
+  );
   const [summary, setSummary] = useState<TaskSummary | null>(
     storedState.summary,
   );
@@ -288,6 +331,7 @@ function App() {
       notificationRecords,
       inputEventRecords,
       contextSamples,
+      analysisResults,
       summary,
     };
     window.localStorage.setItem(storageKey, JSON.stringify(stateToStore));
@@ -297,6 +341,7 @@ function App() {
     notificationRecords,
     inputEventRecords,
     contextSamples,
+    analysisResults,
     summary,
   ]);
 
@@ -451,6 +496,7 @@ function App() {
     setNotificationRecords([]);
     setInputEventRecords([]);
     setContextSamples([]);
+    setAnalysisResults([]);
     setSummary(null);
   }
 
@@ -479,16 +525,18 @@ function App() {
 
       setWindowSnapshot(snapshot);
       setScreenshotResult(screenshot);
+      const sample: ContextSampleRecord = {
+        recordedAt: nowLabel(),
+        trigger,
+        taskGoal: task?.goal ?? "未开始任务",
+        window: snapshot,
+        screenshot,
+      };
       setContextSamples((records) => [
-        {
-          recordedAt: nowLabel(),
-          trigger,
-          taskGoal: task?.goal ?? "未开始任务",
-          window: snapshot,
-          screenshot,
-        },
+        sample,
         ...records,
       ]);
+      setAnalysisResults((records) => [analyzeContextSample(sample), ...records]);
     } catch (error) {
       const message = String(error);
       setScreenshotError(message);
@@ -545,6 +593,7 @@ function App() {
             notificationRecords={notificationRecords}
             inputEventRecords={inputEventRecords}
             contextSamples={contextSamples}
+            analysisResults={analysisResults}
             summary={summary}
             endTask={endTask}
             windowSnapshot={windowSnapshot}
@@ -586,6 +635,7 @@ function StatusPage({
   notificationRecords,
   inputEventRecords,
   contextSamples,
+  analysisResults,
   summary,
   endTask,
   windowSnapshot,
@@ -605,6 +655,7 @@ function StatusPage({
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
   contextSamples: ContextSampleRecord[];
+  analysisResults: LocalAnalysisResult[];
   summary: TaskSummary | null;
   endTask: () => void;
   windowSnapshot: ForegroundWindowSnapshot | null;
@@ -847,6 +898,25 @@ function StatusPage({
                   </span>
                 )}
                 {sample.error && <em>{sample.error}</em>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="card">
+        <p className="eyebrow">本地分析结果</p>
+        <h2>采样后的临时判断</h2>
+        {analysisResults.length === 0 ? (
+          <p className="muted">还没有分析结果。完成一次上下文采样后会自动生成。</p>
+        ) : (
+          <ul className="analysis-list">
+            {analysisResults.slice(0, 3).map((result, index) => (
+              <li key={`${result.recordedAt}-${index}`}>
+                <strong>{result.should_notify ? "提示" : "不提示"}</strong>
+                <span>{result.notify_type}</span>
+                <p>{result.body}</p>
+                <small>{result.basis}</small>
               </li>
             ))}
           </ul>

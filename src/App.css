@@ -298,14 +298,16 @@ textarea:focus {
 
 .soft-list,
 .record-list,
-.context-list {
+.context-list,
+.analysis-list {
   margin: 16px 0 0;
   padding: 0;
   list-style: none;
 }
 
 .record-list,
-.context-list {
+.context-list,
+.analysis-list {
   display: grid;
   gap: 10px;
 }
@@ -386,6 +388,23 @@ textarea:focus {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+.analysis-list li {
+  display: grid;
+  gap: 8px;
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(31, 54, 46, 0.06);
+}
+
+.analysis-list p {
+  margin: 0;
+}
+
+.analysis-list span,
+.analysis-list small {
+  color: rgba(24, 35, 31, 0.62);
 }
 
 .orb-wrap {
