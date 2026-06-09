@@ -25,6 +25,10 @@ src-tauri/gen/schemas/
 
 # SuperGuider local runtime data
 data/
+src-tauri/data/
+src-tauri/data/private-settings.json
+private-settings.json
+src-tauri/private-settings.json
 screenshots/
 *.sqlite
 *.sqlite3

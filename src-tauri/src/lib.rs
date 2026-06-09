@@ -40,6 +40,15 @@ struct AiAnalysisRequest {
     schema_json: String,
 }
 
+#[derive(Deserialize, Serialize)]
+struct PrivateSettings {
+    api_url: String,
+    api_key: String,
+    screenshot_model: String,
+    navigation_model: String,
+    allowed_apps: Vec<String>,
+}
+
 #[tauri::command]
 fn get_foreground_window_snapshot() -> ForegroundWindowSnapshot {
     platform_foreground_window_snapshot()
@@ -80,6 +89,30 @@ fn save_app_state(state: PersistedAppState) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+fn load_private_settings() -> Result<Option<PrivateSettings>, String> {
+    let path = private_settings_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_private_settings(settings: PrivateSettings) -> Result<(), String> {
+    let path = private_settings_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let raw = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+    fs::write(path, raw).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -169,8 +202,20 @@ fn open_state_database() -> Result<Connection, String> {
 }
 
 fn state_database_path() -> Result<PathBuf, String> {
+    superguider_data_dir().map(|path| path.join("superguider.sqlite3"))
+}
+
+fn private_settings_path() -> Result<PathBuf, String> {
+    superguider_data_dir().map(|path| path.join("private-settings.json"))
+}
+
+fn superguider_data_dir() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+        return Ok(PathBuf::from(path).join("SuperGuider"));
+    }
+
     std::env::current_dir()
-        .map(|path| path.join("data").join("superguider.sqlite3"))
+        .map(|path| path.join("data"))
         .map_err(|error| error.to_string())
 }
 
@@ -443,6 +488,8 @@ pub fn run() {
             capture_screenshot_snapshot,
             load_app_state,
             save_app_state,
+            load_private_settings,
+            save_private_settings,
             analyze_context_with_ai
         ])
         .run(tauri::generate_context!())

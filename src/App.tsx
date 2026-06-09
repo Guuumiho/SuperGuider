@@ -75,6 +75,7 @@ type Settings = {
   apiUrl: string;
   screenshotModel: string;
   navigationModel: string;
+  allowedApps: string[];
 };
 
 type AiAnalysisRequest = {
@@ -85,8 +86,15 @@ type AiAnalysisRequest = {
   schema_json: string;
 };
 
+type PrivateSettings = {
+  api_url: string;
+  api_key: string;
+  screenshot_model: string;
+  navigation_model: string;
+  allowed_apps: string[];
+};
+
 type StoredAppState = {
-  settings: Settings;
   task: Task | null;
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
@@ -125,10 +133,10 @@ const defaultSettings: Settings = {
   apiUrl: "",
   screenshotModel: "",
   navigationModel: "",
+  allowedApps: [],
 };
 
 const defaultStoredState: StoredAppState = {
-  settings: defaultSettings,
   task: null,
   notificationRecords: [],
   inputEventRecords: [],
@@ -288,21 +296,12 @@ function loadStoredState(): StoredAppState {
 
 function normalizeStoredState(state: Partial<StoredAppState>): StoredAppState {
   return {
-    settings: normalizeSettings(state.settings),
     task: state.task ?? null,
     notificationRecords: state.notificationRecords ?? [],
     inputEventRecords: state.inputEventRecords ?? [],
     contextSamples: state.contextSamples ?? [],
     analysisResults: state.analysisResults ?? [],
     summary: state.summary ?? null,
-  };
-}
-
-function normalizeSettings(settings?: Partial<Settings>): Settings {
-  return {
-    apiUrl: settings?.apiUrl ?? defaultSettings.apiUrl,
-    screenshotModel: settings?.screenshotModel ?? defaultSettings.screenshotModel,
-    navigationModel: settings?.navigationModel ?? defaultSettings.navigationModel,
   };
 }
 
@@ -318,7 +317,7 @@ function App() {
     deadline: "",
     notes: "",
   });
-  const [settings, setSettings] = useState<Settings>(storedState.settings);
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [apiKey, setApiKey] = useState("");
   const [activeNotification, setActiveNotification] =
     useState<NotificationScenario | null>(null);
@@ -355,9 +354,12 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadDatabaseState() {
+    async function loadStoredData() {
       try {
-        const rawState = await invoke<string | null>("load_app_state");
+        const [rawState, privateSettings] = await Promise.all([
+          invoke<string | null>("load_app_state"),
+          invoke<PrivateSettings | null>("load_private_settings"),
+        ]);
         if (cancelled) {
           return;
         }
@@ -365,8 +367,18 @@ function App() {
         if (rawState) {
           applyStoredState(normalizeStoredState(JSON.parse(rawState)));
         }
+
+        if (privateSettings) {
+          setSettings({
+            apiUrl: privateSettings.api_url,
+            screenshotModel: privateSettings.screenshot_model,
+            navigationModel: privateSettings.navigation_model,
+            allowedApps: privateSettings.allowed_apps,
+          });
+          setApiKey(privateSettings.api_key);
+        }
       } catch (error) {
-        console.warn("Could not load SQLite app state", error);
+        console.warn("Could not load stored data", error);
       } finally {
         if (!cancelled) {
           setDatabaseLoaded(true);
@@ -374,7 +386,7 @@ function App() {
       }
     }
 
-    void loadDatabaseState();
+    void loadStoredData();
 
     return () => {
       cancelled = true;
@@ -383,7 +395,6 @@ function App() {
 
   useEffect(() => {
     const stateToStore: StoredAppState = {
-      settings,
       task,
       notificationRecords,
       inputEventRecords,
@@ -403,7 +414,6 @@ function App() {
     }
   }, [
     databaseLoaded,
-    settings,
     task,
     notificationRecords,
     inputEventRecords,
@@ -411,6 +421,26 @@ function App() {
     analysisResults,
     summary,
   ]);
+
+  useEffect(() => {
+    if (!databaseLoaded) {
+      return;
+    }
+
+    const privateSettings: PrivateSettings = {
+      api_url: settings.apiUrl,
+      api_key: apiKey,
+      screenshot_model: settings.screenshotModel,
+      navigation_model: settings.navigationModel,
+      allowed_apps: settings.allowedApps,
+    };
+
+    void invoke("save_private_settings", { settings: privateSettings }).catch(
+      (error) => {
+        console.warn("Could not save private settings", error);
+      },
+    );
+  }, [apiKey, databaseLoaded, settings]);
 
   useEffect(() => {
     let disposed = false;
@@ -530,7 +560,6 @@ function App() {
   }
 
   function applyStoredState(state: StoredAppState) {
-    setSettings(state.settings);
     setTask(state.task);
     setMode(state.task ? "task_tracking" : "silent_companion");
     setNotificationRecords(state.notificationRecords);
@@ -561,7 +590,7 @@ function App() {
   }
 
   function resetDemoData() {
-    const confirmed = window.confirm("确定清空本机数据吗？API Key 不会被保存，本次运行内存里的 Key 也会清空。");
+    const confirmed = window.confirm("确定清空本机运行记录吗？API URL、API Key、模型和应用列表会保留。");
     if (!confirmed) {
       return;
     }
@@ -570,8 +599,6 @@ function App() {
     setMode("silent_companion");
     setTask(null);
     setDraftTask({ goal: "", deadline: "", notes: "" });
-    setSettings(defaultSettings);
-    setApiKey("");
     setActiveNotification(null);
     setNotificationRecords([]);
     setInputEventRecords([]);
@@ -1095,6 +1122,7 @@ function SettingsPage({
           <p>
             真实 AI 使用 OpenAI 兼容的 chat completions 接口。只有 API URL、API Key
             和任务导航模型都填写后，采样才会请求真实 AI；否则使用本地兜底分析。
+            这些隐私配置会保存到本机 %LOCALAPPDATA%\SuperGuider\private-settings.json，不进入 GitHub。
           </p>
         </div>
         <label>
@@ -1118,7 +1146,7 @@ function SettingsPage({
             onChange={(event) => setApiKey(event.currentTarget.value)}
             placeholder="sk-..."
           />
-          <span className="field-note">只保存在本次运行内存中，不写入 SQLite 或 localStorage。</span>
+          <span className="field-note">保存到本机私密 settings 文件，不上传 GitHub。</span>
         </label>
         <label>
           截图理解模型
@@ -1152,11 +1180,30 @@ function SettingsPage({
             当前真实 AI 分析使用这个模型，返回结果会先经过结构校验。
           </span>
         </label>
+        <label>
+          允许采样/分析的应用列表
+          <textarea
+            value={settings.allowedApps.join("\n")}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                allowedApps: event.currentTarget.value
+                  .split("\n")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              })
+            }
+            placeholder="每行一个应用名，例如：Code.exe&#10;chrome.exe&#10;notepad.exe"
+          />
+          <span className="field-note">
+            当前先保存配置，后续会用于限制哪些应用允许进入上下文采样。
+          </span>
+        </label>
         <div className="settings-note">
           <strong>本机数据与截图</strong>
           <p>
-            任务、采样记录和分析结果保存到本机 SQLite：src-tauri/data/superguider.sqlite3。
-            API Key 不保存。截图不保存为图片文件，所以当前没有截图保存路径。
+            任务、采样记录和分析结果保存到 SQLite：%LOCALAPPDATA%\SuperGuider\superguider.sqlite3。
+            隐私配置保存到 %LOCALAPPDATA%\SuperGuider\private-settings.json。截图不保存为图片文件，所以当前没有截图保存路径。
           </p>
         </div>
         <button className="danger-button" onClick={resetDemoData}>
