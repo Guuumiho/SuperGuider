@@ -73,7 +73,6 @@ type GlobalInputEvent = {
 
 type Settings = {
   apiUrl: string;
-  apiKey: string;
   screenshotModel: string;
   navigationModel: string;
 };
@@ -124,7 +123,6 @@ const storageKey = "superguider-demo-state";
 
 const defaultSettings: Settings = {
   apiUrl: "",
-  apiKey: "",
   screenshotModel: "",
   navigationModel: "",
 };
@@ -194,20 +192,6 @@ const notificationScenarios: Record<string, NotificationScenario> = {
     body: "",
     button: "none",
   },
-};
-
-const demoSummary: TaskSummary = {
-  scenario: "task_completed_summary",
-  should_notify: false,
-  summary_text:
-    "这次主要推进了 SuperGuider 最小 Demo 的桌面壳、基础事件记录和提示气泡闭环。",
-  time_breakdown: [
-    { topic: "搭建 Tauri 主面板", duration_minutes: 55 },
-    { topic: "调试窗口标题和输入事件", duration_minutes: 80 },
-    { topic: "接入任务分析提示气泡", duration_minutes: 45 },
-  ],
-  final_observation:
-    "后半段有一些视觉细节优化倾向，不过主线已经接近一个可演示闭环。",
 };
 
 function nowLabel() {
@@ -304,13 +288,21 @@ function loadStoredState(): StoredAppState {
 
 function normalizeStoredState(state: Partial<StoredAppState>): StoredAppState {
   return {
-    settings: { ...defaultSettings, ...state.settings },
+    settings: normalizeSettings(state.settings),
     task: state.task ?? null,
     notificationRecords: state.notificationRecords ?? [],
     inputEventRecords: state.inputEventRecords ?? [],
     contextSamples: state.contextSamples ?? [],
     analysisResults: state.analysisResults ?? [],
     summary: state.summary ?? null,
+  };
+}
+
+function normalizeSettings(settings?: Partial<Settings>): Settings {
+  return {
+    apiUrl: settings?.apiUrl ?? defaultSettings.apiUrl,
+    screenshotModel: settings?.screenshotModel ?? defaultSettings.screenshotModel,
+    navigationModel: settings?.navigationModel ?? defaultSettings.navigationModel,
   };
 }
 
@@ -327,6 +319,7 @@ function App() {
     notes: "",
   });
   const [settings, setSettings] = useState<Settings>(storedState.settings);
+  const [apiKey, setApiKey] = useState("");
   const [activeNotification, setActiveNotification] =
     useState<NotificationScenario | null>(null);
   const [notificationRecords, setNotificationRecords] = useState<
@@ -355,7 +348,7 @@ function App() {
 
   const initialized =
     settings.apiUrl &&
-    settings.apiKey &&
+    apiKey &&
     settings.screenshotModel &&
     settings.navigationModel;
 
@@ -563,12 +556,12 @@ function App() {
 
     setTask(null);
     setMode("silent_companion");
-    setSummary(demoSummary);
+    setSummary(null);
     setActiveNotification(null);
   }
 
   function resetDemoData() {
-    const confirmed = window.confirm("确定清空本机演示数据吗？");
+    const confirmed = window.confirm("确定清空本机数据吗？API Key 不会被保存，本次运行内存里的 Key 也会清空。");
     if (!confirmed) {
       return;
     }
@@ -578,6 +571,7 @@ function App() {
     setTask(null);
     setDraftTask({ goal: "", deadline: "", notes: "" });
     setSettings(defaultSettings);
+    setApiKey("");
     setActiveNotification(null);
     setNotificationRecords([]);
     setInputEventRecords([]);
@@ -647,7 +641,7 @@ function App() {
   async function analyzeSample(sample: ContextSampleRecord) {
     if (
       !settings.apiUrl.trim() ||
-      !settings.apiKey.trim() ||
+      !apiKey.trim() ||
       !settings.navigationModel.trim()
     ) {
       return analyzeContextSample(sample);
@@ -656,7 +650,7 @@ function App() {
     try {
       const request: AiAnalysisRequest = {
         api_url: settings.apiUrl,
-        api_key: settings.apiKey,
+        api_key: apiKey,
         model: settings.navigationModel,
         context_json: JSON.stringify(sample),
         schema_json: JSON.stringify(analysisResultSchema),
@@ -725,6 +719,8 @@ function App() {
             initialized={Boolean(initialized)}
             settings={settings}
             setSettings={setSettings}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
             resetDemoData={resetDemoData}
           />
         )}
@@ -1071,11 +1067,15 @@ function SettingsPage({
   initialized,
   settings,
   setSettings,
+  apiKey,
+  setApiKey,
   resetDemoData,
 }: {
   initialized: boolean;
   settings: Settings;
   setSettings: (settings: Settings) => void;
+  apiKey: string;
+  setApiKey: (apiKey: string) => void;
   resetDemoData: () => void;
 }) {
   return (
@@ -1104,12 +1104,11 @@ function SettingsPage({
           API Key
           <input
             type="password"
-            value={settings.apiKey}
-            onChange={(event) =>
-              setSettings({ ...settings, apiKey: event.currentTarget.value })
-            }
+            value={apiKey}
+            onChange={(event) => setApiKey(event.currentTarget.value)}
             placeholder="sk-..."
           />
+          <span className="field-note">只保存在本次运行内存中，不写入 SQLite 或 localStorage。</span>
         </label>
         <label>
           截图理解模型
@@ -1138,7 +1137,7 @@ function SettingsPage({
           />
         </label>
         <button className="danger-button" onClick={resetDemoData}>
-          清空本机演示数据
+          清空本机数据
         </button>
       </section>
     </div>

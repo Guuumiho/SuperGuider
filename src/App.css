@@ -373,6 +373,12 @@ textarea:focus {
   font-weight: 800;
 }
 
+.field-note {
+  color: rgba(24, 35, 31, 0.56);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .context-list span,
 .context-list small {
   color: rgba(24, 35, 31, 0.62);
