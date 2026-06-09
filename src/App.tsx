@@ -94,6 +94,8 @@ type PrivateSettings = {
   allowed_apps: string[];
 };
 
+type SettingsSaveStatus = "idle" | "saving" | "saved" | "error";
+
 type StoredAppState = {
   task: Task | null;
   notificationRecords: NotificationRecord[];
@@ -319,6 +321,8 @@ function App() {
   });
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [apiKey, setApiKey] = useState("");
+  const [settingsSaveStatus, setSettingsSaveStatus] =
+    useState<SettingsSaveStatus>("idle");
   const [activeNotification, setActiveNotification] =
     useState<NotificationScenario | null>(null);
   const [notificationRecords, setNotificationRecords] = useState<
@@ -421,26 +425,6 @@ function App() {
     analysisResults,
     summary,
   ]);
-
-  useEffect(() => {
-    if (!databaseLoaded) {
-      return;
-    }
-
-    const privateSettings: PrivateSettings = {
-      api_url: settings.apiUrl,
-      api_key: apiKey,
-      screenshot_model: settings.screenshotModel,
-      navigation_model: settings.navigationModel,
-      allowed_apps: settings.allowedApps,
-    };
-
-    void invoke("save_private_settings", { settings: privateSettings }).catch(
-      (error) => {
-        console.warn("Could not save private settings", error);
-      },
-    );
-  }, [apiKey, databaseLoaded, settings]);
 
   useEffect(() => {
     let disposed = false;
@@ -568,6 +552,36 @@ function App() {
     setAnalysisResults(state.analysisResults);
     setSummary(state.summary);
     setActiveNotification(null);
+  }
+
+  function updateSettings(nextSettings: Settings) {
+    setSettings(nextSettings);
+    setSettingsSaveStatus("idle");
+  }
+
+  function updateApiKey(nextApiKey: string) {
+    setApiKey(nextApiKey);
+    setSettingsSaveStatus("idle");
+  }
+
+  async function savePrivateSettings() {
+    setSettingsSaveStatus("saving");
+
+    const privateSettings: PrivateSettings = {
+      api_url: settings.apiUrl,
+      api_key: apiKey,
+      screenshot_model: settings.screenshotModel,
+      navigation_model: settings.navigationModel,
+      allowed_apps: settings.allowedApps,
+    };
+
+    try {
+      await invoke("save_private_settings", { settings: privateSettings });
+      setSettingsSaveStatus("saved");
+    } catch (error) {
+      console.warn("Could not save private settings", error);
+      setSettingsSaveStatus("error");
+    }
   }
 
   function clickCorrection(scenario: NotificationScenario) {
@@ -745,9 +759,11 @@ function App() {
           <SettingsPage
             initialized={Boolean(initialized)}
             settings={settings}
-            setSettings={setSettings}
+            setSettings={updateSettings}
             apiKey={apiKey}
-            setApiKey={setApiKey}
+            setApiKey={updateApiKey}
+            savePrivateSettings={savePrivateSettings}
+            settingsSaveStatus={settingsSaveStatus}
             resetDemoData={resetDemoData}
           />
         )}
@@ -1096,6 +1112,8 @@ function SettingsPage({
   setSettings,
   apiKey,
   setApiKey,
+  savePrivateSettings,
+  settingsSaveStatus,
   resetDemoData,
 }: {
   initialized: boolean;
@@ -1103,6 +1121,8 @@ function SettingsPage({
   setSettings: (settings: Settings) => void;
   apiKey: string;
   setApiKey: (apiKey: string) => void;
+  savePrivateSettings: () => Promise<void>;
+  settingsSaveStatus: SettingsSaveStatus;
   resetDemoData: () => void;
 }) {
   return (
@@ -1205,6 +1225,22 @@ function SettingsPage({
             任务、采样记录和分析结果保存到 SQLite：%LOCALAPPDATA%\SuperGuider\superguider.sqlite3。
             隐私配置保存到 %LOCALAPPDATA%\SuperGuider\private-settings.json。截图不保存为图片文件，所以当前没有截图保存路径。
           </p>
+        </div>
+        <div className="settings-actions">
+          <button
+            className="primary-button"
+            disabled={settingsSaveStatus === "saving"}
+            onClick={() => void savePrivateSettings()}
+          >
+            {settingsSaveStatus === "saving" ? "保存中..." : "保存设置"}
+          </button>
+          <span className={`save-status ${settingsSaveStatus}`}>
+            {settingsSaveStatus === "saved"
+              ? "已保存到本机"
+              : settingsSaveStatus === "error"
+                ? "保存失败，请看日志"
+                : "修改后请点击保存"}
+          </span>
         </div>
         <button className="danger-button" onClick={resetDemoData}>
           清空本机数据

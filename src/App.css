@@ -290,6 +290,31 @@ textarea:focus {
   background: rgba(184, 88, 53, 0.14);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.settings-actions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.save-status {
+  color: rgba(24, 35, 31, 0.58);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.save-status.saved {
+  color: #39624e;
+}
+
+.save-status.error {
+  color: #9b3827;
+}
+
 .footer-actions {
   grid-column: 1 / -1;
   display: flex;
