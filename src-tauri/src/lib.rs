@@ -1,5 +1,7 @@
-use serde::Serialize;
-use std::path::Path;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Serialize)]
 struct GlobalInputEvent {
@@ -24,6 +26,11 @@ struct ScreenshotCaptureResult {
     height: u32,
 }
 
+#[derive(Deserialize)]
+struct PersistedAppState {
+    state_json: String,
+}
+
 #[tauri::command]
 fn get_foreground_window_snapshot() -> ForegroundWindowSnapshot {
     platform_foreground_window_snapshot()
@@ -32,6 +39,65 @@ fn get_foreground_window_snapshot() -> ForegroundWindowSnapshot {
 #[tauri::command]
 fn capture_screenshot_snapshot() -> ScreenshotCaptureResult {
     platform_capture_screenshot_snapshot()
+}
+
+#[tauri::command]
+fn load_app_state() -> Result<Option<String>, String> {
+    let connection = open_state_database()?;
+    let mut statement = connection
+        .prepare("SELECT state_json FROM app_state WHERE id = 1")
+        .map_err(|error| error.to_string())?;
+    let result = statement.query_row([], |row| row.get::<_, String>(0));
+
+    match result {
+        Ok(state_json) => Ok(Some(state_json)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+fn save_app_state(state: PersistedAppState) -> Result<(), String> {
+    let connection = open_state_database()?;
+    connection
+        .execute(
+            "INSERT INTO app_state (id, state_json, updated_at)
+             VALUES (1, ?1, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET
+               state_json = excluded.state_json,
+               updated_at = excluded.updated_at",
+            params![state.state_json],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+fn open_state_database() -> Result<Connection, String> {
+    let database_path = state_database_path()?;
+    if let Some(parent) = database_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let connection = Connection::open(database_path).map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "CREATE TABLE IF NOT EXISTS app_state (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              state_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|error| error.to_string())?;
+
+    Ok(connection)
+}
+
+fn state_database_path() -> Result<PathBuf, String> {
+    std::env::current_dir()
+        .map(|path| path.join("data").join("superguider.sqlite3"))
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(windows)]
@@ -300,7 +366,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_foreground_window_snapshot,
-            capture_screenshot_snapshot
+            capture_screenshot_snapshot,
+            load_app_state,
+            save_app_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

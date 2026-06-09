@@ -126,6 +126,16 @@ const defaultSettings: Settings = {
   navigationModel: "",
 };
 
+const defaultStoredState: StoredAppState = {
+  settings: defaultSettings,
+  task: null,
+  notificationRecords: [],
+  inputEventRecords: [],
+  contextSamples: [],
+  analysisResults: [],
+  summary: null,
+};
+
 const referencePlan: ReferencePlan = {
   scenario: "create_reference_task_plan",
   should_notify: false,
@@ -273,52 +283,32 @@ function notificationFromAnalysis(
 
 function loadStoredState(): StoredAppState {
   if (typeof window === "undefined") {
-    return {
-      settings: defaultSettings,
-      task: null,
-      notificationRecords: [],
-      inputEventRecords: [],
-      contextSamples: [],
-      analysisResults: [],
-      summary: null,
-    };
+    return defaultStoredState;
   }
 
   try {
     const raw = window.localStorage.getItem(storageKey);
     if (!raw) {
-      return {
-        settings: defaultSettings,
-        task: null,
-        notificationRecords: [],
-        inputEventRecords: [],
-        contextSamples: [],
-        analysisResults: [],
-        summary: null,
-      };
+      return defaultStoredState;
     }
 
     const parsed = JSON.parse(raw) as Partial<StoredAppState>;
-    return {
-      settings: { ...defaultSettings, ...parsed.settings },
-      task: parsed.task ?? null,
-      notificationRecords: parsed.notificationRecords ?? [],
-      inputEventRecords: parsed.inputEventRecords ?? [],
-      contextSamples: parsed.contextSamples ?? [],
-      analysisResults: parsed.analysisResults ?? [],
-      summary: parsed.summary ?? null,
-    };
+    return normalizeStoredState(parsed);
   } catch {
-    return {
-      settings: defaultSettings,
-      task: null,
-      notificationRecords: [],
-      inputEventRecords: [],
-      contextSamples: [],
-      analysisResults: [],
-      summary: null,
-    };
+    return defaultStoredState;
   }
+}
+
+function normalizeStoredState(state: Partial<StoredAppState>): StoredAppState {
+  return {
+    settings: { ...defaultSettings, ...state.settings },
+    task: state.task ?? null,
+    notificationRecords: state.notificationRecords ?? [],
+    inputEventRecords: state.inputEventRecords ?? [],
+    contextSamples: state.contextSamples ?? [],
+    analysisResults: state.analysisResults ?? [],
+    summary: state.summary ?? null,
+  };
 }
 
 function App() {
@@ -358,12 +348,42 @@ function App() {
     useState<ScreenshotCaptureResult | null>(null);
   const [screenshotError, setScreenshotError] = useState("");
   const [hoveringNotification, setHoveringNotification] = useState(false);
+  const [databaseLoaded, setDatabaseLoaded] = useState(false);
 
   const initialized =
     settings.apiUrl &&
     settings.apiKey &&
     settings.screenshotModel &&
     settings.navigationModel;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDatabaseState() {
+      try {
+        const rawState = await invoke<string | null>("load_app_state");
+        if (cancelled) {
+          return;
+        }
+
+        if (rawState) {
+          applyStoredState(normalizeStoredState(JSON.parse(rawState)));
+        }
+      } catch (error) {
+        console.warn("Could not load SQLite app state", error);
+      } finally {
+        if (!cancelled) {
+          setDatabaseLoaded(true);
+        }
+      }
+    }
+
+    void loadDatabaseState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const stateToStore: StoredAppState = {
@@ -375,8 +395,18 @@ function App() {
       analysisResults,
       summary,
     };
-    window.localStorage.setItem(storageKey, JSON.stringify(stateToStore));
+    const stateJson = JSON.stringify(stateToStore);
+    window.localStorage.setItem(storageKey, stateJson);
+
+    if (databaseLoaded) {
+      void invoke("save_app_state", { state: { state_json: stateJson } }).catch(
+        (error) => {
+          console.warn("Could not save SQLite app state", error);
+        },
+      );
+    }
   }, [
+    databaseLoaded,
     settings,
     task,
     notificationRecords,
@@ -501,6 +531,18 @@ function App() {
       },
       ...records,
     ]);
+  }
+
+  function applyStoredState(state: StoredAppState) {
+    setSettings(state.settings);
+    setTask(state.task);
+    setMode(state.task ? "task_tracking" : "silent_companion");
+    setNotificationRecords(state.notificationRecords);
+    setInputEventRecords(state.inputEventRecords);
+    setContextSamples(state.contextSamples);
+    setAnalysisResults(state.analysisResults);
+    setSummary(state.summary);
+    setActiveNotification(null);
   }
 
   function clickCorrection(scenario: NotificationScenario) {
