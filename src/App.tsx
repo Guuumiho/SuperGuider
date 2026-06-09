@@ -1316,7 +1316,7 @@ function SettingsPage({
 }) {
   return (
     <div className="page-grid">
-      <section className="hero-card">
+      <section className="settings-hero wide">
         <p className="eyebrow">初始化设置</p>
         <h1>{initialized ? "已具备运行条件" : "还缺少模型配置"}</h1>
         <p>
@@ -1325,7 +1325,7 @@ function SettingsPage({
         </p>
       </section>
 
-      <section className="card">
+      <section className="card wide">
         <div className="settings-note">
           <strong>配置说明</strong>
           <p>
