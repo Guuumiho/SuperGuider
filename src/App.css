@@ -441,11 +441,31 @@ button:disabled {
   font-weight: 900;
 }
 
+.app-permission-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.app-permission-column {
+  min-width: 0;
+  border-radius: 22px;
+  padding: 14px;
+  background: rgba(31, 54, 46, 0.04);
+}
+
+.app-permission-column h3 {
+  margin: 0 0 12px;
+  color: #315746;
+  font-size: 16px;
+}
+
 .app-permission-list {
   display: grid;
   max-height: 360px;
   gap: 10px;
-  margin: 0 0 16px;
+  margin: 0;
   padding: 0;
   overflow: auto;
   list-style: none;
@@ -603,7 +623,8 @@ button:disabled {
   }
 
   .page-grid,
-  .stage-list {
+  .stage-list,
+  .app-permission-columns {
     grid-template-columns: 1fr;
   }
 

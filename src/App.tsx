@@ -1322,6 +1322,72 @@ function SettingsPage({
   settingsSaveStatus: SettingsSaveStatus;
   resetDemoData: () => void;
 }) {
+  const joinedApps = settings.appPermissions.filter(
+    (permission) => permission.monitor_enabled && permission.user_confirmed,
+  );
+  const availableApps = settings.appPermissions.filter(
+    (permission) => !permission.monitor_enabled || !permission.user_confirmed,
+  );
+
+  function updateAppPermission(
+    permissionId: string,
+    updates: Partial<AppPermission>,
+  ) {
+    setSettings({
+      ...settings,
+      appPermissions: sortAppPermissions(
+        settings.appPermissions.map((item) =>
+          item.id === permissionId ? { ...item, ...updates } : item,
+        ),
+      ),
+    });
+  }
+
+  function renderAppPermission(permission: AppPermission) {
+    return (
+      <li
+        className={
+          permission.user_confirmed
+            ? "app-permission-item"
+            : "app-permission-item pending"
+        }
+        key={permission.id}
+      >
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={permission.monitor_enabled && permission.user_confirmed}
+            onChange={(event) =>
+              updateAppPermission(permission.id, {
+                monitor_enabled: event.currentTarget.checked,
+                user_confirmed: true,
+              })
+            }
+          />
+          <span>
+            <strong>{permission.app_name}</strong>
+            <small>
+              {permission.process_name || "快捷方式应用"} · {permission.discovery_source}
+            </small>
+          </span>
+        </label>
+        {isWeChatApp(permission) && (
+          <p className="wechat-hint">如果是工作微信，建议勾选监控。</p>
+        )}
+        {!permission.user_confirmed && (
+          <button
+            className="ghost-button"
+            onClick={() =>
+              updateAppPermission(permission.id, { user_confirmed: true })
+            }
+          >
+            确认加入列表
+          </button>
+        )}
+      </li>
+    );
+  }
+
   return (
     <div className="page-grid">
       <section className="card wide">
@@ -1397,75 +1463,33 @@ function SettingsPage({
         </div>
         <div className="app-permission-summary">
           <span>已发现 {settings.appPermissions.length} 个应用</span>
-          <span>
-            待确认 {settings.appPermissions.filter((permission) => !permission.user_confirmed).length} 个
-          </span>
+          <span>已加入 {joinedApps.length} 个</span>
+          <span>未加入 {availableApps.length} 个</span>
         </div>
-        <ul className="app-permission-list">
-          {settings.appPermissions.length === 0 ? (
-            <li className="app-permission-empty">
-              还没有扫描到应用。重启应用或触发一次上下文采样后会自动补充。
-            </li>
-          ) : (
-            settings.appPermissions.map((permission) => (
-              <li
-                className={
-                  permission.user_confirmed
-                    ? "app-permission-item"
-                    : "app-permission-item pending"
-                }
-                key={permission.id}
-              >
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={permission.monitor_enabled}
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        appPermissions: settings.appPermissions.map((item) =>
-                          item.id === permission.id
-                            ? {
-                                ...item,
-                                monitor_enabled: event.currentTarget.checked,
-                                user_confirmed: true,
-                              }
-                            : item,
-                        ),
-                      })
-                    }
-                  />
-                  <span>
-                    <strong>{permission.app_name}</strong>
-                    <small>
-                      {permission.process_name || "开始菜单应用"} · {permission.discovery_source}
-                    </small>
-                  </span>
-                </label>
-                {isWeChatApp(permission) && (
-                  <p className="wechat-hint">如果是工作微信，建议勾选监控。</p>
-                )}
-                {!permission.user_confirmed && (
-                  <button
-                    className="ghost-button"
-                    onClick={() =>
-                      setSettings({
-                        ...settings,
-                        appPermissions: settings.appPermissions.map((item) =>
-                          item.id === permission.id
-                            ? { ...item, user_confirmed: true }
-                            : item,
-                        ),
-                      })
-                    }
-                  >
-                    确认加入列表
-                  </button>
-                )}
-              </li>
-            ))
-          )}
-        </ul>
+        <div className="app-permission-columns">
+          <section className="app-permission-column">
+            <h3>已加入监控</h3>
+            <ul className="app-permission-list">
+              {joinedApps.length === 0 ? (
+                <li className="app-permission-empty">还没有加入监控的应用。</li>
+              ) : (
+                joinedApps.map(renderAppPermission)
+              )}
+            </ul>
+          </section>
+          <section className="app-permission-column">
+            <h3>未加入监控</h3>
+            <ul className="app-permission-list">
+              {availableApps.length === 0 ? (
+                <li className="app-permission-empty">
+                  暂无未加入应用。运行中发现的新应用会出现在这里。
+                </li>
+              ) : (
+                availableApps.map(renderAppPermission)
+              )}
+            </ul>
+          </section>
+        </div>
         <div className="settings-note">
           <strong>本机数据与截图</strong>
           <p>
