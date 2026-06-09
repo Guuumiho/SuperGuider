@@ -12,6 +12,18 @@ Install dependencies:
 npm install
 ```
 
+Run the desktop app in development mode:
+
+```bash
+dev.cmd
+```
+
+Or run the same command manually:
+
+```bash
+npm run tauri dev
+```
+
 Build the frontend:
 
 ```bash
@@ -25,8 +37,8 @@ cd src-tauri
 cargo check
 ```
 
-Run the desktop app:
+Build the desktop installer/package:
 
 ```bash
-npm run tauri dev
+build-app.cmd
 ```
