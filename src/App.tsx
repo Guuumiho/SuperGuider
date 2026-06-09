@@ -179,7 +179,7 @@ function createAppPermission(
   const basePermission = {
     app_name: app.app_name || app.process_name || "未知应用",
     process_name: app.process_name,
-    monitor_enabled: !isWeChatApp(app),
+    monitor_enabled: shouldEnableMonitoringByDefault(app),
     user_confirmed: userConfirmed,
     discovery_source: app.source,
     discovered_at: nowLabel(),
@@ -222,8 +222,22 @@ function permissionFromSnapshot(snapshot: ForegroundWindowSnapshot) {
 
 function sortAppPermissions(permissions: AppPermission[]) {
   return [...permissions].sort((left, right) =>
+    Number(right.monitor_enabled) - Number(left.monitor_enabled) ||
+    Number(left.user_confirmed) - Number(right.user_confirmed) ||
     left.app_name.toLowerCase().localeCompare(right.app_name.toLowerCase()),
   );
+}
+
+function shouldEnableMonitoringByDefault(app: DetectedApp) {
+  if (isWeChatApp(app)) {
+    return false;
+  }
+
+  return [
+    "public_desktop",
+    "user_desktop",
+    "taskbar_pinned",
+  ].includes(app.source);
 }
 
 function appNameAliases(app: Pick<AppPermission, "app_name" | "process_name">) {
@@ -1378,8 +1392,8 @@ function SettingsPage({
         <div className="settings-note app-permission-note">
           <strong>应用监控范围</strong>
           <p>
-            首次启动会扫描电脑上的应用：除微信外默认勾选监控。微信默认不勾选；
-            如果是工作微信，建议勾选监控。运行中发现的新应用会先加入待确认列表，确认前不会截图。
+            首次启动会扫描桌面和任务栏固定的应用：除微信外默认勾选监控，其他来源的应用默认不勾选。
+            微信默认不勾选；如果是工作微信，建议勾选监控。运行中发现的新应用会先加入待确认列表，确认前不会截图。
           </p>
         </div>
         <div className="app-permission-summary">

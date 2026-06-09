@@ -247,18 +247,39 @@ fn superguider_data_dir() -> Result<PathBuf, String> {
 fn platform_scan_installed_apps() -> Vec<DetectedApp> {
     let mut apps = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let mut roots = Vec::new();
+    let mut roots: Vec<(PathBuf, &'static str)> = Vec::new();
 
     if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-        roots.push(PathBuf::from(program_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
+        roots.push((PathBuf::from(program_data).join("Desktop"), "public_desktop"));
+    }
+
+    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+        roots.push((PathBuf::from(user_profile).join("Desktop"), "user_desktop"));
+    }
+
+    if let Some(home_drive) = std::env::var_os("HOMEDRIVE") {
+        if let Some(home_path) = std::env::var_os("HOMEPATH") {
+            roots.push((
+                PathBuf::from(format!(
+                    "{}{}\\Desktop",
+                    home_drive.to_string_lossy(),
+                    home_path.to_string_lossy()
+                )),
+                "user_desktop",
+            ));
+        }
     }
 
     if let Some(app_data) = std::env::var_os("APPDATA") {
-        roots.push(PathBuf::from(app_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
+        roots.push((
+            PathBuf::from(app_data)
+                .join("Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar"),
+            "taskbar_pinned",
+        ));
     }
 
-    for root in roots {
-        collect_start_menu_apps(&root, &mut apps, &mut seen);
+    for (root, source) in roots {
+        collect_shortcut_apps(&root, source, &mut apps, &mut seen);
     }
 
     apps.sort_by(|left, right| left.app_name.to_lowercase().cmp(&right.app_name.to_lowercase()));
@@ -271,8 +292,9 @@ fn platform_scan_installed_apps() -> Vec<DetectedApp> {
 }
 
 #[cfg(windows)]
-fn collect_start_menu_apps(
+fn collect_shortcut_apps(
     directory: &Path,
+    source: &str,
     apps: &mut Vec<DetectedApp>,
     seen: &mut std::collections::HashSet<String>,
 ) {
@@ -284,7 +306,7 @@ fn collect_start_menu_apps(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_start_menu_apps(&path, apps, seen);
+            collect_shortcut_apps(&path, source, apps, seen);
             continue;
         }
 
@@ -315,7 +337,7 @@ fn collect_start_menu_apps(
         apps.push(DetectedApp {
             app_name,
             process_name: String::new(),
-            source: "windows_start_menu".to_string(),
+            source: source.to_string(),
         });
     }
 }
