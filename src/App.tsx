@@ -75,7 +75,6 @@ type Settings = {
   apiUrl: string;
   screenshotModel: string;
   navigationModel: string;
-  allowedApps: string[];
 };
 
 type AiAnalysisRequest = {
@@ -91,7 +90,6 @@ type PrivateSettings = {
   api_key: string;
   screenshot_model: string;
   navigation_model: string;
-  allowed_apps: string[];
 };
 
 type SettingsSaveStatus = "idle" | "saving" | "saved" | "error";
@@ -135,7 +133,6 @@ const defaultSettings: Settings = {
   apiUrl: "",
   screenshotModel: "",
   navigationModel: "",
-  allowedApps: [],
 };
 
 const defaultStoredState: StoredAppState = {
@@ -146,32 +143,6 @@ const defaultStoredState: StoredAppState = {
   analysisResults: [],
   summary: null,
 };
-
-function isAppAllowedForSampling(
-  snapshot: ForegroundWindowSnapshot,
-  allowedApps: string[],
-) {
-  const normalizedAllowedApps = allowedApps
-    .map((app) => normalizeAppMatcher(app))
-    .filter(Boolean);
-
-  if (normalizedAllowedApps.length === 0) {
-    return true;
-  }
-
-  const candidates = [
-    snapshot.process_name,
-    snapshot.app_name,
-  ].map((value) => normalizeAppMatcher(value));
-
-  return normalizedAllowedApps.some((allowedApp) =>
-    candidates.some((candidate) => candidate === allowedApp),
-  );
-}
-
-function normalizeAppMatcher(value: string) {
-  return value.trim().toLowerCase();
-}
 
 const referencePlan: ReferencePlan = {
   scenario: "create_reference_task_plan",
@@ -403,7 +374,6 @@ function App() {
             apiUrl: privateSettings.api_url,
             screenshotModel: privateSettings.screenshot_model,
             navigationModel: privateSettings.navigation_model,
-            allowedApps: privateSettings.allowed_apps,
           });
           setApiKey(privateSettings.api_key);
         }
@@ -598,7 +568,6 @@ function App() {
       api_key: apiKey,
       screenshot_model: settings.screenshotModel,
       navigation_model: settings.navigationModel,
-      allowed_apps: settings.allowedApps,
     };
 
     try {
@@ -670,27 +639,6 @@ function App() {
       );
 
       setWindowSnapshot(snapshot);
-
-      if (!isAppAllowedForSampling(snapshot, settings.allowedApps)) {
-        const blockedAppName =
-          snapshot.process_name || snapshot.app_name || "未知应用";
-        const sample: ContextSampleRecord = {
-          recordedAt: nowLabel(),
-          trigger,
-          taskGoal: task?.goal ?? "未开始任务",
-          window: snapshot,
-          screenshot: null,
-          error: `已跳过采样：${blockedAppName} 不在允许应用列表中。`,
-        };
-        setScreenshotResult(null);
-        setContextSamples((records) => [
-          sample,
-          ...records,
-        ]);
-        setAnalysisResults((records) => [analyzeContextSample(sample), ...records]);
-        return;
-      }
-
       const screenshot = await invoke<ScreenshotCaptureResult>(
         "capture_screenshot_snapshot",
       );
@@ -1247,25 +1195,6 @@ function SettingsPage({
           />
           <span className="field-note">
             当前真实 AI 分析使用这个模型，返回结果会先经过结构校验。
-          </span>
-        </label>
-        <label>
-          采样范围：允许的前台应用
-          <textarea
-            value={settings.allowedApps.join("\n")}
-            onChange={(event) =>
-              setSettings({
-                ...settings,
-                allowedApps: event.currentTarget.value
-                  .split("\n")
-                  .map((item) => item.trim())
-                  .filter(Boolean),
-              })
-            }
-            placeholder="每行一个进程名或应用名，例如：Code.exe&#10;chrome.exe&#10;notepad.exe"
-          />
-          <span className="field-note">
-            留空表示允许所有应用。填写后，只有当前前台应用匹配列表时才会截图和调用 AI；不匹配时只记录跳过原因。
           </span>
         </label>
         <div className="settings-note">

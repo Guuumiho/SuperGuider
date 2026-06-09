@@ -46,7 +46,6 @@ struct PrivateSettings {
     api_key: String,
     screenshot_model: String,
     navigation_model: String,
-    allowed_apps: Vec<String>,
 }
 
 #[tauri::command]
