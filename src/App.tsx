@@ -75,6 +75,7 @@ type Settings = {
   apiUrl: string;
   screenshotModel: string;
   navigationModel: string;
+  appPermissions: AppPermission[];
 };
 
 type AiAnalysisRequest = {
@@ -90,9 +91,26 @@ type PrivateSettings = {
   api_key: string;
   screenshot_model: string;
   navigation_model: string;
+  app_permissions?: AppPermission[];
 };
 
 type SettingsSaveStatus = "idle" | "saving" | "saved" | "error";
+
+type DetectedApp = {
+  app_name: string;
+  process_name: string;
+  source: string;
+};
+
+type AppPermission = {
+  id: string;
+  app_name: string;
+  process_name: string;
+  monitor_enabled: boolean;
+  user_confirmed: boolean;
+  discovery_source: string;
+  discovered_at: string;
+};
 
 type StoredAppState = {
   task: Task | null;
@@ -133,6 +151,7 @@ const defaultSettings: Settings = {
   apiUrl: "",
   screenshotModel: "",
   navigationModel: "",
+  appPermissions: [],
 };
 
 const defaultStoredState: StoredAppState = {
@@ -143,6 +162,114 @@ const defaultStoredState: StoredAppState = {
   analysisResults: [],
   summary: null,
 };
+
+function appPermissionId(app: Pick<AppPermission, "app_name" | "process_name">) {
+  const processName = app.process_name.trim().toLowerCase();
+  if (processName) {
+    return `process:${processName}`;
+  }
+
+  return `app:${app.app_name.trim().toLowerCase()}`;
+}
+
+function createAppPermission(
+  app: DetectedApp,
+  userConfirmed: boolean,
+): AppPermission {
+  const basePermission = {
+    app_name: app.app_name || app.process_name || "未知应用",
+    process_name: app.process_name,
+    monitor_enabled: !isWeChatApp(app),
+    user_confirmed: userConfirmed,
+    discovery_source: app.source,
+    discovered_at: nowLabel(),
+  };
+
+  return {
+    id: appPermissionId(basePermission),
+    ...basePermission,
+  };
+}
+
+function mergeAppPermissions(
+  currentPermissions: AppPermission[],
+  detectedApps: DetectedApp[],
+) {
+  const merged = [...currentPermissions];
+  const seen = new Set(merged.map((permission) => permission.id));
+
+  for (const detectedApp of detectedApps) {
+    const permission = createAppPermission(detectedApp, true);
+    if (!seen.has(permission.id)) {
+      merged.push(permission);
+      seen.add(permission.id);
+    }
+  }
+
+  return sortAppPermissions(merged);
+}
+
+function permissionFromSnapshot(snapshot: ForegroundWindowSnapshot) {
+  return createAppPermission(
+    {
+      app_name: snapshot.app_name,
+      process_name: snapshot.process_name,
+      source: "foreground_window_runtime",
+    },
+    false,
+  );
+}
+
+function sortAppPermissions(permissions: AppPermission[]) {
+  return [...permissions].sort((left, right) =>
+    left.app_name.toLowerCase().localeCompare(right.app_name.toLowerCase()),
+  );
+}
+
+function appNameAliases(app: Pick<AppPermission, "app_name" | "process_name">) {
+  return new Set(
+    [
+      app.app_name,
+      app.process_name,
+      app.process_name.replace(/\.exe$/i, ""),
+    ]
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function isWeChatApp(app: Pick<AppPermission, "app_name" | "process_name">) {
+  const value = `${app.app_name} ${app.process_name}`.toLowerCase();
+  return value.includes("wechat") || value.includes("weixin") || value.includes("微信");
+}
+
+function canSampleApp(snapshot: ForegroundWindowSnapshot, permissions: AppPermission[]) {
+  const permission = findAppPermission(snapshot, permissions);
+  return Boolean(permission?.monitor_enabled && permission.user_confirmed);
+}
+
+function findAppPermission(
+  snapshot: ForegroundWindowSnapshot,
+  permissions: AppPermission[],
+) {
+  const id = appPermissionId({
+    app_name: snapshot.app_name,
+    process_name: snapshot.process_name,
+  });
+  const snapshotAliases = appNameAliases({
+    app_name: snapshot.app_name,
+    process_name: snapshot.process_name,
+  });
+
+  return permissions.find((item) => {
+    if (item.id === id) {
+      return true;
+    }
+
+    const itemAliases = appNameAliases(item);
+    return [...snapshotAliases].some((alias) => itemAliases.has(alias));
+  });
+}
 
 const referencePlan: ReferencePlan = {
   scenario: "create_reference_task_plan",
@@ -357,9 +484,10 @@ function App() {
 
     async function loadStoredData() {
       try {
-        const [rawState, privateSettings] = await Promise.all([
+        const [rawState, privateSettings, detectedApps] = await Promise.all([
           invoke<string | null>("load_app_state"),
           invoke<PrivateSettings | null>("load_private_settings"),
+          invoke<DetectedApp[]>("scan_installed_apps"),
         ]);
         if (cancelled) {
           return;
@@ -370,12 +498,22 @@ function App() {
         }
 
         if (privateSettings) {
+          const appPermissions = mergeAppPermissions(
+            privateSettings.app_permissions ?? [],
+            detectedApps,
+          );
           setSettings({
             apiUrl: privateSettings.api_url,
             screenshotModel: privateSettings.screenshot_model,
             navigationModel: privateSettings.navigation_model,
+            appPermissions,
           });
           setApiKey(privateSettings.api_key);
+        } else {
+          setSettings({
+            ...defaultSettings,
+            appPermissions: mergeAppPermissions([], detectedApps),
+          });
         }
       } catch (error) {
         console.warn("Could not load stored data", error);
@@ -568,6 +706,7 @@ function App() {
       api_key: apiKey,
       screenshot_model: settings.screenshotModel,
       navigation_model: settings.navigationModel,
+      app_permissions: settings.appPermissions,
     };
 
     try {
@@ -639,6 +778,45 @@ function App() {
       );
 
       setWindowSnapshot(snapshot);
+      if (!canSampleApp(snapshot, settings.appPermissions)) {
+        const runtimePermission = permissionFromSnapshot(snapshot);
+        const existingPermission = findAppPermission(
+          snapshot,
+          settings.appPermissions,
+        );
+        const blockReason = existingPermission
+          ? existingPermission.user_confirmed
+            ? `${existingPermission.app_name} 已在设置中关闭监控。`
+            : `${existingPermission.app_name} 尚未在设置中确认允许监控。`
+          : `${runtimePermission.app_name} 是新发现应用，已加入待确认列表。`;
+        const sample: ContextSampleRecord = {
+          recordedAt: nowLabel(),
+          trigger,
+          taskGoal: task?.goal ?? "未开始任务",
+          window: snapshot,
+          screenshot: null,
+          error: `已跳过截图：${blockReason}`,
+        };
+
+        if (!existingPermission) {
+          updateSettings({
+            ...settings,
+            appPermissions: sortAppPermissions([
+              ...settings.appPermissions,
+              runtimePermission,
+            ]),
+          });
+        }
+
+        setScreenshotResult(null);
+        setContextSamples((records) => [
+          sample,
+          ...records,
+        ]);
+        setAnalysisResults((records) => [analyzeContextSample(sample), ...records]);
+        return;
+      }
+
       const screenshot = await invoke<ScreenshotCaptureResult>(
         "capture_screenshot_snapshot",
       );
@@ -1197,6 +1375,84 @@ function SettingsPage({
             当前真实 AI 分析使用这个模型，返回结果会先经过结构校验。
           </span>
         </label>
+        <div className="settings-note app-permission-note">
+          <strong>应用监控范围</strong>
+          <p>
+            首次启动会扫描电脑上的应用：除微信外默认勾选监控。微信默认不勾选；
+            如果是工作微信，建议勾选监控。运行中发现的新应用会先加入待确认列表，确认前不会截图。
+          </p>
+        </div>
+        <div className="app-permission-summary">
+          <span>已发现 {settings.appPermissions.length} 个应用</span>
+          <span>
+            待确认 {settings.appPermissions.filter((permission) => !permission.user_confirmed).length} 个
+          </span>
+        </div>
+        <ul className="app-permission-list">
+          {settings.appPermissions.length === 0 ? (
+            <li className="app-permission-empty">
+              还没有扫描到应用。重启应用或触发一次上下文采样后会自动补充。
+            </li>
+          ) : (
+            settings.appPermissions.map((permission) => (
+              <li
+                className={
+                  permission.user_confirmed
+                    ? "app-permission-item"
+                    : "app-permission-item pending"
+                }
+                key={permission.id}
+              >
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={permission.monitor_enabled}
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        appPermissions: settings.appPermissions.map((item) =>
+                          item.id === permission.id
+                            ? {
+                                ...item,
+                                monitor_enabled: event.currentTarget.checked,
+                                user_confirmed: true,
+                              }
+                            : item,
+                        ),
+                      })
+                    }
+                  />
+                  <span>
+                    <strong>{permission.app_name}</strong>
+                    <small>
+                      {permission.process_name || "开始菜单应用"} · {permission.discovery_source}
+                    </small>
+                  </span>
+                </label>
+                {isWeChatApp(permission) && (
+                  <p className="wechat-hint">如果是工作微信，建议勾选监控。</p>
+                )}
+                {!permission.user_confirmed && (
+                  <button
+                    className="ghost-button"
+                    onClick={() =>
+                      setSettings({
+                        ...settings,
+                        appPermissions: settings.appPermissions.map((item) =>
+                          item.id === permission.id
+                            ? { ...item, user_confirmed: true }
+                            : item,
+                        ),
+                      })
+                    }
+                  >
+                    确认加入列表
+                  </button>
+                )}
+              </li>
+            ))
+          )}
+        </ul>
         <div className="settings-note">
           <strong>本机数据与截图</strong>
           <p>

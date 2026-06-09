@@ -18,6 +18,13 @@ struct ForegroundWindowSnapshot {
 }
 
 #[derive(Serialize)]
+struct DetectedApp {
+    app_name: String,
+    process_name: String,
+    source: String,
+}
+
+#[derive(Serialize)]
 struct ScreenshotCaptureResult {
     status: String,
     reason: String,
@@ -46,6 +53,19 @@ struct PrivateSettings {
     api_key: String,
     screenshot_model: String,
     navigation_model: String,
+    #[serde(default)]
+    app_permissions: Vec<AppPermissionSetting>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct AppPermissionSetting {
+    id: String,
+    app_name: String,
+    process_name: String,
+    monitor_enabled: bool,
+    user_confirmed: bool,
+    discovery_source: String,
+    discovered_at: String,
 }
 
 #[tauri::command]
@@ -56,6 +76,11 @@ fn get_foreground_window_snapshot() -> ForegroundWindowSnapshot {
 #[tauri::command]
 fn capture_screenshot_snapshot() -> ScreenshotCaptureResult {
     platform_capture_screenshot_snapshot()
+}
+
+#[tauri::command]
+fn scan_installed_apps() -> Vec<DetectedApp> {
+    platform_scan_installed_apps()
 }
 
 #[tauri::command]
@@ -216,6 +241,83 @@ fn superguider_data_dir() -> Result<PathBuf, String> {
     std::env::current_dir()
         .map(|path| path.join("data"))
         .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn platform_scan_installed_apps() -> Vec<DetectedApp> {
+    let mut apps = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut roots = Vec::new();
+
+    if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+        roots.push(PathBuf::from(program_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
+    }
+
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        roots.push(PathBuf::from(app_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
+    }
+
+    for root in roots {
+        collect_start_menu_apps(&root, &mut apps, &mut seen);
+    }
+
+    apps.sort_by(|left, right| left.app_name.to_lowercase().cmp(&right.app_name.to_lowercase()));
+    apps
+}
+
+#[cfg(not(windows))]
+fn platform_scan_installed_apps() -> Vec<DetectedApp> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn collect_start_menu_apps(
+    directory: &Path,
+    apps: &mut Vec<DetectedApp>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_start_menu_apps(&path, apps, seen);
+            continue;
+        }
+
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !matches!(extension.as_str(), "lnk" | "exe") {
+            continue;
+        }
+
+        let app_name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Unknown App")
+            .trim()
+            .to_string();
+        if app_name.is_empty() {
+            continue;
+        }
+
+        let key = app_name.to_lowercase();
+        if !seen.insert(key) {
+            continue;
+        }
+
+        apps.push(DetectedApp {
+            app_name,
+            process_name: String::new(),
+            source: "windows_start_menu".to_string(),
+        });
+    }
 }
 
 #[cfg(windows)]
@@ -485,6 +587,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_foreground_window_snapshot,
             capture_screenshot_snapshot,
+            scan_installed_apps,
             load_app_state,
             save_app_state,
             load_private_settings,
