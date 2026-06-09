@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  type AnalysisResult,
+  type NotifyButton,
+  validateAnalysisResult,
+} from "./aiContract";
 import "./App.css";
 
 type Page = "status" | "settings";
 type AppMode = "silent_companion" | "task_tracking";
-type NotifyButton = "none" | "actually_related" | "important_detail";
 
 type Task = {
   goal: string;
@@ -79,7 +83,7 @@ type StoredAppState = {
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
   contextSamples: ContextSampleRecord[];
-  analysisResults: LocalAnalysisResult[];
+  analysisResults: AnalysisResult[];
   summary: TaskSummary | null;
 };
 
@@ -105,16 +109,6 @@ type ContextSampleRecord = {
   window: ForegroundWindowSnapshot | null;
   screenshot: ScreenshotCaptureResult | null;
   error?: string;
-};
-
-type LocalAnalysisResult = {
-  recordedAt: string;
-  scenario: string;
-  should_notify: boolean;
-  notify_type: string;
-  body: string;
-  basis: string;
-  button: NotifyButton;
 };
 
 const storageKey = "superguider-demo-state";
@@ -215,9 +209,9 @@ function nowLabel() {
   });
 }
 
-function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult {
+function analyzeContextSample(sample: ContextSampleRecord): AnalysisResult {
   if (sample.error) {
-    return {
+    return validateAnalysisResult({
       recordedAt: nowLabel(),
       scenario: "context_sample_failed",
       should_notify: false,
@@ -225,7 +219,7 @@ function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult 
       body: "这次上下文采样失败，先不打扰用户。",
       basis: sample.error,
       button: "none",
-    };
+    });
   }
 
   const appName = sample.window?.app_name ?? "未知应用";
@@ -247,7 +241,7 @@ function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult 
   );
 
   if (sample.taskGoal !== "未开始任务" && looksDistracting) {
-    return {
+    return validateAnalysisResult({
       recordedAt: nowLabel(),
       scenario: "local_off_track_detected",
       should_notify: true,
@@ -255,10 +249,10 @@ function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult 
       body: `当前窗口看起来可能和任务目标关系不大：${appName} / ${windowTitle}。如果你正在执行「${sample.taskGoal}」，可以先回到任务主线。`,
       basis: `${appName} / ${windowTitle} / screenshot:${screenshotStatus}`,
       button: "actually_related",
-    };
+    });
   }
 
-  return {
+  return validateAnalysisResult({
     recordedAt: nowLabel(),
     scenario: "context_sample_checked",
     should_notify: false,
@@ -266,11 +260,11 @@ function analyzeContextSample(sample: ContextSampleRecord): LocalAnalysisResult 
     body: "已完成一次上下文采样。本地分析层暂不主动提示，只记录判断依据。",
     basis: `${appName} / ${windowTitle} / screenshot:${screenshotStatus}`,
     button: "none",
-  };
+  });
 }
 
 function notificationFromAnalysis(
-  result: LocalAnalysisResult,
+  result: AnalysisResult,
 ): NotificationScenario {
   return {
     scenario: result.scenario,
@@ -335,7 +329,7 @@ function App() {
   const [contextSamples, setContextSamples] = useState<ContextSampleRecord[]>(
     storedState.contextSamples,
   );
-  const [analysisResults, setAnalysisResults] = useState<LocalAnalysisResult[]>(
+  const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>(
     storedState.analysisResults,
   );
   const [summary, setSummary] = useState<TaskSummary | null>(
@@ -742,7 +736,7 @@ function StatusPage({
   notificationRecords: NotificationRecord[];
   inputEventRecords: InputEventRecord[];
   contextSamples: ContextSampleRecord[];
-  analysisResults: LocalAnalysisResult[];
+  analysisResults: AnalysisResult[];
   summary: TaskSummary | null;
   endTask: () => void;
   windowSnapshot: ForegroundWindowSnapshot | null;
