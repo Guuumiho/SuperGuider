@@ -619,7 +619,7 @@ function App() {
       unlistenGlobalInput?.();
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [task]);
+  }, [apiKey, settings, task]);
 
   useEffect(() => {
     if (!activeNotification || hoveringNotification) {
@@ -819,12 +819,23 @@ function App() {
         };
 
         if (!existingPermission) {
-          updateSettings({
-            ...settings,
-            appPermissions: sortAppPermissions([
-              ...settings.appPermissions,
-              runtimePermission,
-            ]),
+          setSettings((currentSettings) => {
+            const alreadyExists = currentSettings.appPermissions.some(
+              (permission) => permission.id === runtimePermission.id,
+            );
+
+            if (alreadyExists) {
+              return currentSettings;
+            }
+
+            setSettingsSaveStatus("idle");
+            return {
+              ...currentSettings,
+              appPermissions: sortAppPermissions([
+                ...currentSettings.appPermissions,
+                runtimePermission,
+              ]),
+            };
           });
         }
 
