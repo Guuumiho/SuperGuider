@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  analysisResultSchema,
   type AnalysisResult,
   type NotifyButton,
   validateAnalysisResult,
@@ -75,6 +76,14 @@ type Settings = {
   apiKey: string;
   screenshotModel: string;
   navigationModel: string;
+};
+
+type AiAnalysisRequest = {
+  api_url: string;
+  api_key: string;
+  model: string;
+  context_json: string;
+  schema_json: string;
 };
 
 type StoredAppState = {
@@ -613,7 +622,7 @@ function App() {
         sample,
         ...records,
       ]);
-      const analysis = analyzeContextSample(sample);
+      const analysis = await analyzeSample(sample);
       setAnalysisResults((records) => [analysis, ...records]);
       triggerScenario(notificationFromAnalysis(analysis));
     } catch (error) {
@@ -632,6 +641,33 @@ function App() {
         ...records,
       ]);
       setAnalysisResults((records) => [analyzeContextSample(sample), ...records]);
+    }
+  }
+
+  async function analyzeSample(sample: ContextSampleRecord) {
+    if (
+      !settings.apiUrl.trim() ||
+      !settings.apiKey.trim() ||
+      !settings.navigationModel.trim()
+    ) {
+      return analyzeContextSample(sample);
+    }
+
+    try {
+      const request: AiAnalysisRequest = {
+        api_url: settings.apiUrl,
+        api_key: settings.apiKey,
+        model: settings.navigationModel,
+        context_json: JSON.stringify(sample),
+        schema_json: JSON.stringify(analysisResultSchema),
+      };
+      const rawResult = await invoke<string>("analyze_context_with_ai", {
+        request,
+      });
+      return validateAnalysisResult(JSON.parse(rawResult));
+    } catch (error) {
+      console.warn("Falling back to local analysis", error);
+      return analyzeContextSample(sample);
     }
   }
 
@@ -986,8 +1022,8 @@ function StatusPage({
       </section>
 
       <section className="card">
-        <p className="eyebrow">本地分析结果</p>
-        <h2>采样后的临时判断</h2>
+        <p className="eyebrow">分析结果</p>
+        <h2>AI 优先，本地兜底</h2>
         {analysisResults.length === 0 ? (
           <p className="muted">还没有分析结果。完成一次上下文采样后会自动生成。</p>
         ) : (
@@ -1048,8 +1084,8 @@ function SettingsPage({
         <p className="eyebrow">初始化设置</p>
         <h1>{initialized ? "已具备运行条件" : "还缺少模型配置"}</h1>
         <p>
-          第一版暂时不会调用真实 AI，但保留这些入口，方便后续把内置场景
-          替换成真实模型。
+          填入 OpenAI 兼容的 API 地址、Key 和任务导航模型后，采样会优先调用真实 AI；
+          如果配置缺失或请求失败，会自动回落到本地分析。
         </p>
       </section>
 

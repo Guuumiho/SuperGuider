@@ -31,6 +31,15 @@ struct PersistedAppState {
     state_json: String,
 }
 
+#[derive(Deserialize)]
+struct AiAnalysisRequest {
+    api_url: String,
+    api_key: String,
+    model: String,
+    context_json: String,
+    schema_json: String,
+}
+
 #[tauri::command]
 fn get_foreground_window_snapshot() -> ForegroundWindowSnapshot {
     platform_foreground_window_snapshot()
@@ -71,6 +80,71 @@ fn save_app_state(state: PersistedAppState) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, String> {
+    if request.api_url.trim().is_empty() {
+        return Err("API URL is required.".to_string());
+    }
+
+    if request.api_key.trim().is_empty() {
+        return Err("API Key is required.".to_string());
+    }
+
+    if request.model.trim().is_empty() {
+        return Err("Model is required.".to_string());
+    }
+
+    let endpoint = chat_completions_endpoint(&request.api_url);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(endpoint)
+        .bearer_auth(request.api_key)
+        .json(&serde_json::json!({
+            "model": request.model,
+            "temperature": 0.2,
+            "response_format": { "type": "json_object" },
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are SuperGuider's low-interruption task guidance analyzer. Return only one JSON object matching the provided schema. Do not wrap it in markdown."
+                },
+                {
+                    "role": "user",
+                    "content": format!(
+                        "Schema:\n{}\n\nContext:\n{}\n\nDecide whether to notify the user now. Use should_notify=false when evidence is weak.",
+                        request.schema_json,
+                        request.context_json
+                    )
+                }
+            ]
+        }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let status = response.status();
+    let body = response.text().await.map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        return Err(format!("AI request failed with {status}: {body}"));
+    }
+
+    let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| error.to_string())?;
+    value
+        .pointer("/choices/0/message/content")
+        .and_then(|content| content.as_str())
+        .map(|content| content.to_string())
+        .ok_or_else(|| "AI response did not include choices[0].message.content.".to_string())
+}
+
+fn chat_completions_endpoint(api_url: &str) -> String {
+    let trimmed = api_url.trim().trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/chat/completions")
+    }
 }
 
 fn open_state_database() -> Result<Connection, String> {
@@ -368,7 +442,8 @@ pub fn run() {
             get_foreground_window_snapshot,
             capture_screenshot_snapshot,
             load_app_state,
-            save_app_state
+            save_app_state,
+            analyze_context_with_ai
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
