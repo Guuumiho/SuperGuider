@@ -37,6 +37,12 @@ screenshots/
 # Local-only planning and development fixtures
 docs/
 docs/mocks/
+product-document.md
+prd.md
+mvp-technical-plan.md
+**/product-document.md
+**/prd.md
+**/mvp-technical-plan.md
 mocks/
 fixtures/
 *.fixture.json
