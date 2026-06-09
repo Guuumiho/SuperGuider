@@ -492,6 +492,12 @@ function App() {
     apiKey &&
     settings.screenshotModel &&
     settings.navigationModel;
+  const missingSettings = [
+    !settings.apiUrl.trim() ? "API URL" : "",
+    !apiKey.trim() ? "API Key" : "",
+    !settings.screenshotModel.trim() ? "截图理解模型" : "",
+    !settings.navigationModel.trim() ? "任务导航模型" : "",
+  ].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -953,6 +959,7 @@ function App() {
             setApiKey={updateApiKey}
             savePrivateSettings={savePrivateSettings}
             settingsSaveStatus={settingsSaveStatus}
+            missingSettings={missingSettings}
             resetDemoData={resetDemoData}
           />
         )}
@@ -1303,6 +1310,7 @@ function SettingsPage({
   setApiKey,
   savePrivateSettings,
   settingsSaveStatus,
+  missingSettings,
   resetDemoData,
 }: {
   initialized: boolean;
@@ -1312,16 +1320,18 @@ function SettingsPage({
   setApiKey: (apiKey: string) => void;
   savePrivateSettings: () => Promise<void>;
   settingsSaveStatus: SettingsSaveStatus;
+  missingSettings: string[];
   resetDemoData: () => void;
 }) {
   return (
     <div className="page-grid">
       <section className="settings-hero wide">
         <p className="eyebrow">初始化设置</p>
-        <h1>{initialized ? "已具备运行条件" : "还缺少模型配置"}</h1>
+        <h1>{initialized ? "已具备运行条件" : "还缺少必要配置"}</h1>
         <p>
-          填入 OpenAI 兼容的 API 地址、Key 和任务导航模型后，采样会优先调用真实 AI；
-          如果配置缺失或请求失败，会自动回落到本地分析。
+          {initialized
+            ? "API 请求配置已完整，采样会优先调用真实 AI；如果请求失败，会自动回落到本地分析。"
+            : `还缺少：${missingSettings.join("、")}。填写并点击保存设置后，下次启动会从本机设置文件恢复。`}
         </p>
       </section>
 
@@ -1484,7 +1494,7 @@ function SettingsPage({
           </button>
           <span className={`save-status ${settingsSaveStatus}`}>
             {settingsSaveStatus === "saved"
-              ? "已保存到本机"
+              ? "已保存到 %LOCALAPPDATA%\\SuperGuider\\private-settings.json"
               : settingsSaveStatus === "error"
                 ? "保存失败，请看日志"
                 : "修改后请点击保存"}
