@@ -379,6 +379,23 @@ textarea:focus {
   font-weight: 700;
 }
 
+.settings-note {
+  margin-bottom: 16px;
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(31, 54, 46, 0.06);
+}
+
+.settings-note strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.settings-note p {
+  margin: 0;
+  color: rgba(24, 35, 31, 0.64);
+}
+
 .context-list span,
 .context-list small {
   color: rgba(24, 35, 31, 0.62);

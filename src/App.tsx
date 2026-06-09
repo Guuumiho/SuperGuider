@@ -1090,6 +1090,13 @@ function SettingsPage({
       </section>
 
       <section className="card">
+        <div className="settings-note">
+          <strong>配置说明</strong>
+          <p>
+            真实 AI 使用 OpenAI 兼容的 chat completions 接口。只有 API URL、API Key
+            和任务导航模型都填写后，采样才会请求真实 AI；否则使用本地兜底分析。
+          </p>
+        </div>
         <label>
           API URL
           <input
@@ -1099,6 +1106,9 @@ function SettingsPage({
             }
             placeholder="https://api.example.com/v1"
           />
+          <span className="field-note">
+            会自动拼接 /chat/completions；如果你直接填完整路径也可以。
+          </span>
         </label>
         <label>
           API Key
@@ -1122,6 +1132,9 @@ function SettingsPage({
             }
             placeholder="例如：gpt-4.1-mini"
           />
+          <span className="field-note">
+            预留字段：当前截图只生成内存采样元信息，还没有把图片发送给视觉模型。
+          </span>
         </label>
         <label>
           任务导航模型
@@ -1135,7 +1148,17 @@ function SettingsPage({
             }
             placeholder="例如：gpt-4.1"
           />
+          <span className="field-note">
+            当前真实 AI 分析使用这个模型，返回结果会先经过结构校验。
+          </span>
         </label>
+        <div className="settings-note">
+          <strong>本机数据与截图</strong>
+          <p>
+            任务、采样记录和分析结果保存到本机 SQLite：src-tauri/data/superguider.sqlite3。
+            API Key 不保存。截图不保存为图片文件，所以当前没有截图保存路径。
+          </p>
+        </div>
         <button className="danger-button" onClick={resetDemoData}>
           清空本机数据
         </button>
