@@ -1436,19 +1436,46 @@ function SettingsPage({
           {!permission.user_confirmed && (
             <p className="new-app-hint">检测到新应用，还未选择是否加入监控</p>
           )}
-          <button
-            className="ghost-button"
-            onClick={() =>
-              updateAppPermission(
-                permission.id,
-                column === "joined"
-                  ? { monitor_enabled: false, user_confirmed: true }
-                  : { monitor_enabled: true, user_confirmed: true },
-              )
-            }
-          >
-            {column === "joined" ? "移除监控范围" : "加入确认列表"}
-          </button>
+          {!permission.user_confirmed ? (
+            <div className="app-permission-button-row">
+              <button
+                className="ghost-button"
+                onClick={() =>
+                  updateAppPermission(permission.id, {
+                    monitor_enabled: true,
+                    user_confirmed: true,
+                  })
+                }
+              >
+                加入确认列表
+              </button>
+              <button
+                className="ghost-button"
+                onClick={() =>
+                  updateAppPermission(permission.id, {
+                    monitor_enabled: false,
+                    user_confirmed: true,
+                  })
+                }
+              >
+                拒绝监控
+              </button>
+            </div>
+          ) : (
+            <button
+              className="ghost-button"
+              onClick={() =>
+                updateAppPermission(
+                  permission.id,
+                  column === "joined"
+                    ? { monitor_enabled: false, user_confirmed: true }
+                    : { monitor_enabled: true, user_confirmed: true },
+                )
+              }
+            >
+              {column === "joined" ? "移除监控范围" : "加入确认列表"}
+            </button>
+          )}
         </div>
       </li>
     );

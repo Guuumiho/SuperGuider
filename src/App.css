@@ -520,6 +520,13 @@ button:disabled {
   text-align: right;
 }
 
+.app-permission-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .context-list span,
 .context-list small {
   color: rgba(24, 35, 31, 0.62);
@@ -646,6 +653,10 @@ button:disabled {
     justify-items: start;
     max-width: none;
     text-align: left;
+  }
+
+  .app-permission-button-row {
+    justify-content: flex-start;
   }
 
   .orb-wrap {
