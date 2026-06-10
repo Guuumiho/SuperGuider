@@ -232,10 +232,8 @@ function mergePermissionIntoList(
       existingPermission.discovery_source,
       nextPermission.discovery_source,
     ),
-    monitor_enabled:
-      existingPermission.monitor_enabled || nextPermission.monitor_enabled,
-    user_confirmed:
-      existingPermission.user_confirmed || nextPermission.user_confirmed,
+    monitor_enabled: existingPermission.monitor_enabled,
+    user_confirmed: existingPermission.user_confirmed,
   };
 }
 
@@ -565,6 +563,10 @@ function App() {
             privateSettings.app_permissions ?? [],
             detectedApps,
           );
+          const normalizedPrivateSettings: PrivateSettings = {
+            ...privateSettings,
+            app_permissions: appPermissions,
+          };
           setSettings({
             apiUrl: privateSettings.api_url,
             screenshotModel: privateSettings.screenshot_model,
@@ -572,6 +574,16 @@ function App() {
             appPermissions,
           });
           setApiKey(privateSettings.api_key);
+          if (
+            JSON.stringify(privateSettings.app_permissions ?? []) !==
+            JSON.stringify(appPermissions)
+          ) {
+            void invoke("save_private_settings", {
+              settings: normalizedPrivateSettings,
+            }).catch((error) => {
+              console.warn("Could not normalize private settings", error);
+            });
+          }
         } else {
           setSettings({
             ...defaultSettings,
@@ -863,16 +875,20 @@ function App() {
 
         if (!existingPermission) {
           setSettings((currentSettings) => {
+            const alreadyExists = currentSettings.appPermissions.some((permission) =>
+              areSameAppPermission(permission, runtimePermission),
+            );
+
+            if (alreadyExists) {
+              return currentSettings;
+            }
+
             const nextPermissions = [...currentSettings.appPermissions];
             mergePermissionIntoList(nextPermissions, runtimePermission);
             const nextSettings = {
               ...currentSettings,
               appPermissions: sortAppPermissions(nextPermissions),
             };
-
-            if (nextSettings.appPermissions === currentSettings.appPermissions) {
-              return currentSettings;
-            }
 
             setSettingsSaveStatus("idle");
             void savePrivateSettings(nextSettings);
