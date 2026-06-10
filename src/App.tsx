@@ -1408,7 +1408,10 @@ function SettingsPage({
     void savePrivateSettings(nextSettings);
   }
 
-  function renderAppPermission(permission: AppPermission) {
+  function renderAppPermission(
+    permission: AppPermission,
+    column: "joined" | "available",
+  ) {
     return (
       <li
         className={
@@ -1418,37 +1421,35 @@ function SettingsPage({
         }
         key={permission.id}
       >
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={permission.monitor_enabled && permission.user_confirmed}
-            onChange={(event) =>
-              updateAppPermission(permission.id, {
-                monitor_enabled: event.currentTarget.checked,
-                user_confirmed: true,
-              })
-            }
-          />
-          <span>
+        <div className="app-permission-main">
+          <span className="app-permission-copy">
             <strong>{permission.app_name}</strong>
             <small>
               {permission.process_name || "快捷方式应用"} · {permission.discovery_source}
             </small>
           </span>
-        </label>
-        {isWeChatApp(permission) && (
-          <p className="wechat-hint">如果是工作微信，建议勾选监控。</p>
-        )}
-        {!permission.user_confirmed && (
+          {isWeChatApp(permission) && (
+            <p className="wechat-hint">如果是工作微信，建议勾选监控。</p>
+          )}
+        </div>
+        <div className="app-permission-action">
+          {!permission.user_confirmed && (
+            <p className="new-app-hint">检测到新应用，还未选择是否加入监控</p>
+          )}
           <button
             className="ghost-button"
             onClick={() =>
-              updateAppPermission(permission.id, { user_confirmed: true })
+              updateAppPermission(
+                permission.id,
+                column === "joined"
+                  ? { monitor_enabled: false, user_confirmed: true }
+                  : { monitor_enabled: true, user_confirmed: true },
+              )
             }
           >
-            确认加入列表
+            {column === "joined" ? "移除监控范围" : "加入确认列表"}
           </button>
-        )}
+        </div>
       </li>
     );
   }
@@ -1538,7 +1539,9 @@ function SettingsPage({
               {joinedApps.length === 0 ? (
                 <li className="app-permission-empty">还没有加入监控的应用。</li>
               ) : (
-                joinedApps.map(renderAppPermission)
+                joinedApps.map((permission) =>
+                  renderAppPermission(permission, "joined"),
+                )
               )}
             </ul>
           </section>
@@ -1550,7 +1553,9 @@ function SettingsPage({
                   暂无未加入应用。运行中发现的新应用会出现在这里。
                 </li>
               ) : (
-                availableApps.map(renderAppPermission)
+                availableApps.map((permission) =>
+                  renderAppPermission(permission, "available"),
+                )
               )}
             </ul>
           </section>

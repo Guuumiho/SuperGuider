@@ -473,6 +473,10 @@ button:disabled {
 
 .app-permission-item,
 .app-permission-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   border-radius: 18px;
   padding: 12px;
   background: rgba(31, 54, 46, 0.06);
@@ -482,34 +486,38 @@ button:disabled {
   background: rgba(240, 182, 77, 0.18);
 }
 
-.checkbox-row {
-  display: flex;
-  grid-template-columns: none;
-  align-items: flex-start;
-  gap: 10px;
-  margin: 0;
+.app-permission-main {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
 }
 
-.checkbox-row input {
-  width: auto;
-  margin-top: 4px;
-}
-
-.checkbox-row span {
+.app-permission-copy {
   display: grid;
   gap: 4px;
 }
 
-.checkbox-row small,
-.wechat-hint {
+.app-permission-copy small,
+.wechat-hint,
+.new-app-hint {
   color: rgba(24, 35, 31, 0.58);
   font-size: 12px;
   font-weight: 700;
 }
 
-.wechat-hint {
+.wechat-hint,
+.new-app-hint {
   margin: 8px 0 0;
   color: #9a5d19;
+}
+
+.app-permission-action {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  flex: 0 0 auto;
+  max-width: 220px;
+  text-align: right;
 }
 
 .context-list span,
@@ -626,6 +634,18 @@ button:disabled {
   .stage-list,
   .app-permission-columns {
     grid-template-columns: 1fr;
+  }
+
+  .app-permission-item,
+  .app-permission-empty {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-permission-action {
+    justify-items: start;
+    max-width: none;
+    text-align: left;
   }
 
   .orb-wrap {
