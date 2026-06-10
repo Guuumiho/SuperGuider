@@ -516,15 +516,20 @@ button:disabled {
   justify-items: end;
   gap: 8px;
   flex: 0 0 auto;
-  max-width: 220px;
+  max-width: 260px;
   text-align: right;
 }
 
 .app-permission-button-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 8px;
+  white-space: nowrap;
+}
+
+.app-permission-action .ghost-button {
+  white-space: nowrap;
 }
 
 .context-list span,

@@ -1447,7 +1447,7 @@ function SettingsPage({
                   })
                 }
               >
-                加入确认列表
+                加入
               </button>
               <button
                 className="ghost-button"
@@ -1458,7 +1458,7 @@ function SettingsPage({
                   })
                 }
               >
-                拒绝监控
+                拒绝
               </button>
             </div>
           ) : (
@@ -1472,8 +1472,8 @@ function SettingsPage({
                     : { monitor_enabled: true, user_confirmed: true },
                 )
               }
-            >
-              {column === "joined" ? "移除监控范围" : "加入确认列表"}
+              >
+              {column === "joined" ? "移除监控范围" : "加入"}
             </button>
           )}
         </div>
