@@ -319,6 +319,17 @@ fn collect_shortcut_apps(
             continue;
         }
 
+        let target_path = if extension == "lnk" {
+            resolve_shortcut_target(&path)
+        } else {
+            Some(path.clone())
+        };
+        let process_name = target_path
+            .as_ref()
+            .and_then(|target| target.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
         let app_name = path
             .file_stem()
             .and_then(|name| name.to_str())
@@ -329,17 +340,78 @@ fn collect_shortcut_apps(
             continue;
         }
 
-        let key = app_name.to_lowercase();
+        let key = if process_name.is_empty() {
+            app_name.to_lowercase()
+        } else {
+            process_name.to_lowercase()
+        };
         if !seen.insert(key) {
             continue;
         }
 
         apps.push(DetectedApp {
             app_name,
-            process_name: String::new(),
+            process_name,
             source: source.to_string(),
         });
     }
+}
+
+#[cfg(windows)]
+fn resolve_shortcut_target(shortcut_path: &Path) -> Option<PathBuf> {
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let result = (|| {
+            let shell_link: IShellLinkW =
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            let persist_file: IPersistFile = shell_link.cast().ok()?;
+            let shortcut_wide = path_to_wide(shortcut_path);
+            persist_file
+                .Load(PCWSTR(shortcut_wide.as_ptr()), STGM(0))
+                .ok()?;
+
+            let mut target_buffer = vec![0u16; 32768];
+            let mut find_data = WIN32_FIND_DATAW::default();
+            shell_link
+                .GetPath(
+                    &mut target_buffer,
+                    &mut find_data,
+                    SLGP_RAWPATH.0 as u32,
+                )
+                .ok()?;
+
+            let end = target_buffer
+                .iter()
+                .position(|character| *character == 0)
+                .unwrap_or(target_buffer.len());
+            if end == 0 {
+                return None;
+            }
+
+            Some(PathBuf::from(String::from_utf16_lossy(&target_buffer[..end])))
+        })();
+
+        if initialized {
+            CoUninitialize();
+        }
+
+        result
+    }
+}
+
+#[cfg(windows)]
+fn path_to_wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 
 #[cfg(windows)]

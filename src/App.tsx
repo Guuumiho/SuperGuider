@@ -195,18 +195,63 @@ function mergeAppPermissions(
   currentPermissions: AppPermission[],
   detectedApps: DetectedApp[],
 ) {
-  const merged = [...currentPermissions];
-  const seen = new Set(merged.map((permission) => permission.id));
+  const merged: AppPermission[] = [];
+
+  for (const currentPermission of currentPermissions) {
+    mergePermissionIntoList(merged, currentPermission);
+  }
 
   for (const detectedApp of detectedApps) {
     const permission = createAppPermission(detectedApp, true);
-    if (!seen.has(permission.id)) {
-      merged.push(permission);
-      seen.add(permission.id);
-    }
+    mergePermissionIntoList(merged, permission);
   }
 
   return sortAppPermissions(merged);
+}
+
+function mergePermissionIntoList(
+  permissions: AppPermission[],
+  nextPermission: AppPermission,
+) {
+  const existingIndex = permissions.findIndex((permission) =>
+    areSameAppPermission(permission, nextPermission),
+  );
+
+  if (existingIndex === -1) {
+    permissions.push(nextPermission);
+    return;
+  }
+
+  const existingPermission = permissions[existingIndex];
+  permissions[existingIndex] = {
+    ...existingPermission,
+    id: nextPermission.process_name ? nextPermission.id : existingPermission.id,
+    app_name: existingPermission.app_name || nextPermission.app_name,
+    process_name: existingPermission.process_name || nextPermission.process_name,
+    discovery_source: mergeDiscoverySource(
+      existingPermission.discovery_source,
+      nextPermission.discovery_source,
+    ),
+    monitor_enabled:
+      existingPermission.monitor_enabled || nextPermission.monitor_enabled,
+    user_confirmed:
+      existingPermission.user_confirmed || nextPermission.user_confirmed,
+  };
+}
+
+function areSameAppPermission(left: AppPermission, right: AppPermission) {
+  if (left.id === right.id) {
+    return true;
+  }
+
+  const leftAliases = appNameAliases(left);
+  const rightAliases = appNameAliases(right);
+  return [...leftAliases].some((alias) => rightAliases.has(alias));
+}
+
+function mergeDiscoverySource(left: string, right: string) {
+  const sources = new Set([...left.split("+"), ...right.split("+")].filter(Boolean));
+  return [...sources].join("+");
 }
 
 function permissionFromSnapshot(snapshot: ForegroundWindowSnapshot) {
@@ -241,11 +286,15 @@ function shouldEnableMonitoringByDefault(app: DetectedApp) {
 }
 
 function appNameAliases(app: Pick<AppPermission, "app_name" | "process_name">) {
+  const appName = app.app_name.trim();
+  const processName = app.process_name.trim();
   return new Set(
     [
-      app.app_name,
-      app.process_name,
-      app.process_name.replace(/\.exe$/i, ""),
+      appName,
+      processName,
+      processName.replace(/\.exe$/i, ""),
+      appName.replace(/\s*-\s*快捷方式$/i, ""),
+      appName.replace(/\s+shortcut$/i, ""),
     ]
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
@@ -712,15 +761,15 @@ function App() {
     setSettingsSaveStatus("idle");
   }
 
-  async function savePrivateSettings() {
+  async function savePrivateSettings(nextSettings = settings) {
     setSettingsSaveStatus("saving");
 
     const privateSettings: PrivateSettings = {
-      api_url: settings.apiUrl,
+      api_url: nextSettings.apiUrl,
       api_key: apiKey,
-      screenshot_model: settings.screenshotModel,
-      navigation_model: settings.navigationModel,
-      app_permissions: settings.appPermissions,
+      screenshot_model: nextSettings.screenshotModel,
+      navigation_model: nextSettings.navigationModel,
+      app_permissions: nextSettings.appPermissions,
     };
 
     try {
@@ -814,22 +863,20 @@ function App() {
 
         if (!existingPermission) {
           setSettings((currentSettings) => {
-            const alreadyExists = currentSettings.appPermissions.some(
-              (permission) => permission.id === runtimePermission.id,
-            );
+            const nextPermissions = [...currentSettings.appPermissions];
+            mergePermissionIntoList(nextPermissions, runtimePermission);
+            const nextSettings = {
+              ...currentSettings,
+              appPermissions: sortAppPermissions(nextPermissions),
+            };
 
-            if (alreadyExists) {
+            if (nextSettings.appPermissions === currentSettings.appPermissions) {
               return currentSettings;
             }
 
             setSettingsSaveStatus("idle");
-            return {
-              ...currentSettings,
-              appPermissions: sortAppPermissions([
-                ...currentSettings.appPermissions,
-                runtimePermission,
-              ]),
-            };
+            void savePrivateSettings(nextSettings);
+            return nextSettings;
           });
         }
 
@@ -1318,7 +1365,7 @@ function SettingsPage({
   setSettings: (settings: Settings) => void;
   apiKey: string;
   setApiKey: (apiKey: string) => void;
-  savePrivateSettings: () => Promise<void>;
+  savePrivateSettings: (nextSettings?: Settings) => Promise<void>;
   settingsSaveStatus: SettingsSaveStatus;
   resetDemoData: () => void;
 }) {
@@ -1333,14 +1380,16 @@ function SettingsPage({
     permissionId: string,
     updates: Partial<AppPermission>,
   ) {
-    setSettings({
+    const nextSettings = {
       ...settings,
       appPermissions: sortAppPermissions(
         settings.appPermissions.map((item) =>
           item.id === permissionId ? { ...item, ...updates } : item,
         ),
       ),
-    });
+    };
+    setSettings(nextSettings);
+    void savePrivateSettings(nextSettings);
   }
 
   function renderAppPermission(permission: AppPermission) {
