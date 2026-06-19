@@ -369,6 +369,307 @@ button:disabled {
   font-weight: 800;
 }
 
+.queue-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.queue-summary span {
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: #315746;
+  background: rgba(57, 98, 78, 0.1);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.queue-active-grid,
+.queue-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.queue-active,
+.queue-column {
+  min-width: 0;
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(31, 54, 46, 0.06);
+}
+
+.queue-active {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.queue-active span,
+.queue-active small,
+.queue-item span,
+.queue-item small {
+  overflow-wrap: anywhere;
+}
+
+.queue-column-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.queue-column-title {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.queue-column-title small {
+  color: rgba(24, 35, 31, 0.58);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.queue-column-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.queue-column h3 {
+  margin: 0;
+  color: #315746;
+  font-size: 16px;
+}
+
+.queue-toggle-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #315746;
+  background: rgba(57, 98, 78, 0.12);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.queue-toggle-button.paused {
+  color: #8b3f24;
+  background: rgba(240, 182, 77, 0.28);
+}
+
+.queue-list {
+  display: grid;
+  max-height: 360px;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.queue-item,
+.queue-empty {
+  display: grid;
+  gap: 6px;
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255, 252, 243, 0.72);
+}
+
+.queue-item em {
+  color: #9b3827;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.api-log-preview {
+  max-height: 360px;
+  margin: 16px 0 0;
+  border-radius: 18px;
+  padding: 14px;
+  overflow: auto;
+  color: #18231f;
+  background: rgba(31, 54, 46, 0.07);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.activity-log-table-wrap {
+  max-height: 68vh;
+  margin: 16px 0 0;
+  overflow: auto;
+  border-radius: 20px;
+  background: rgba(31, 54, 46, 0.06);
+}
+
+.activity-log-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.activity-time-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.activity-range-status {
+  margin: 8px 0 0;
+  color: rgba(24, 35, 31, 0.58);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.activity-time-controls label {
+  display: grid;
+  gap: 4px;
+  color: rgba(24, 35, 31, 0.58);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.activity-time-controls input {
+  min-width: 190px;
+  border: 1px solid rgba(49, 87, 70, 0.18);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: #18231f;
+  background: rgba(255, 252, 243, 0.9);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.activity-time-controls button {
+  align-self: end;
+}
+
+.activity-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #18231f;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.activity-log-table th,
+.activity-log-table td {
+  padding: 10px 12px;
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.activity-log-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #315746;
+  background: #f4eddc;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.activity-log-table td:first-child {
+  width: 168px;
+  color: rgba(24, 35, 31, 0.58);
+  white-space: nowrap;
+}
+
+.activity-log-table td:nth-child(2) {
+  width: 120px;
+  font-weight: 900;
+}
+
+.activity-log-table td:nth-child(3) {
+  width: 220px;
+}
+
+.activity-log-table td:nth-child(4) {
+  width: 190px;
+  color: #7b3927;
+}
+
+.screenshot-cell {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.screenshot-link-button {
+  border: 0;
+  padding: 0;
+  color: #7b3927;
+  background: transparent;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.screenshot-popover {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(520px, 70vw);
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid rgba(49, 87, 70, 0.18);
+  border-radius: 14px;
+  padding: 14px;
+  color: #18231f;
+  background: #fffaf0;
+  box-shadow: 0 18px 48px rgba(24, 35, 31, 0.18);
+}
+
+.screenshot-popover strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #315746;
+  font-size: 12px;
+}
+
+.screenshot-popover p {
+  margin: 0 0 12px;
+  color: rgba(24, 35, 31, 0.72);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.screenshot-popover p:last-child {
+  margin-bottom: 0;
+}
+
+.activity-log-table tr.app-break td {
+  border-top: 2px solid rgba(49, 87, 70, 0.28);
+}
+
+.activity-log-table tr.muted-row td,
+.activity-log-table tr.muted-row td:first-child,
+.activity-log-table tr.muted-row td:nth-child(2),
+.activity-log-table tr.muted-row td:nth-child(3),
+.activity-log-table tr.muted-row td:nth-child(4) {
+  color: rgba(24, 35, 31, 0.58);
+  font-weight: 500;
+}
+
 .record-list li {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -537,6 +838,29 @@ button:disabled {
   color: rgba(24, 35, 31, 0.62);
 }
 
+.context-detail {
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.context-detail summary {
+  cursor: pointer;
+  color: #315746;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.context-detail p {
+  margin-top: 8px;
+  color: rgba(24, 35, 31, 0.72);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .context-list em {
   color: #9b3827;
   font-style: normal;
@@ -644,8 +968,18 @@ button:disabled {
 
   .page-grid,
   .stage-list,
-  .app-permission-columns {
+  .app-permission-columns,
+  .queue-active-grid,
+  .queue-columns {
     grid-template-columns: 1fr;
+  }
+
+  .activity-log-head {
+    display: grid;
+  }
+
+  .activity-time-controls {
+    justify-content: flex-start;
   }
 
   .app-permission-item,
