@@ -502,6 +502,22 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.test-analysis-result-cell {
+  display: grid;
+  gap: 8px;
+}
+
+.test-analysis-result-cell p,
+.test-analysis-result-cell em {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.test-analysis-result-cell em {
+  color: #9b3827;
+  font-style: normal;
+}
+
 .activity-log-table-wrap {
   max-height: 68vh;
   margin: 16px 0 0;
@@ -553,6 +569,40 @@ button:disabled {
 
 .activity-time-controls button {
   align-self: end;
+}
+
+.test-analysis-controls {
+  justify-content: flex-start;
+  margin: 14px 0;
+}
+
+.test-analysis-controls label:first-child {
+  min-width: min(320px, 100%);
+}
+
+.test-analysis-viewer {
+  display: grid;
+  gap: 12px;
+}
+
+.test-analysis-select {
+  display: grid;
+  max-width: 560px;
+  gap: 4px;
+  color: rgba(24, 35, 31, 0.58);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.test-analysis-select select {
+  border: 1px solid rgba(49, 87, 70, 0.18);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: #18231f;
+  background: rgba(255, 252, 243, 0.9);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .activity-log-table {

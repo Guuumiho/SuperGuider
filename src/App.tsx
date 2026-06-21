@@ -66,11 +66,12 @@ type NotificationRecord = {
 type InputEventRecord = {
   eventType: "enter" | "screenshot";
   recordedAt: string;
-  source: "frontend_window" | "windows_global_keyboard_hook";
+  source: string;
 };
 
 type GlobalInputEventType =
   | InputEventRecord["eventType"]
+  | "activity"
   | "alt_tab_pulse"
   | "alt_tab_end";
 
@@ -145,6 +146,7 @@ type StoredAppState = {
   requestQueues: RequestQueues;
   contextSamples: ContextSampleRecord[];
   analysisResults: AnalysisResult[];
+  testTaskAnalysisRuns: TestTaskAnalysisRun[];
   summary: TaskSummary | null;
 };
 
@@ -270,6 +272,34 @@ type ContextSampleRecord = {
   error?: string;
 };
 
+type TestTaskAnalysisStatus = "queued" | "running" | "done" | "failed";
+
+type TestTaskAnalysisItem = {
+  id: string;
+  sampleId: string;
+  recordedAt: string;
+  screenshotFileName: string;
+  appName: string;
+  windowTitle: string;
+  status: TestTaskAnalysisStatus;
+  attempts: number;
+  rawResponse?: string;
+  parsedBody?: string;
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+type TestTaskAnalysisRun = {
+  id: string;
+  name: string;
+  start: string;
+  end: string;
+  createdAt: string;
+  status: TestTaskAnalysisStatus;
+  items: TestTaskAnalysisItem[];
+};
+
 const storageKey = "superguider-demo-state";
 
 const defaultSettings: Settings = {
@@ -290,12 +320,14 @@ const defaultStoredState: StoredAppState = {
   },
   contextSamples: [],
   analysisResults: [],
+  testTaskAnalysisRuns: [],
   summary: null,
 };
 
 const foregroundStableScreenshotDelayMs = 3000;
 const maximumScreenshotIntervalMs = 3 * 60 * 1000;
 const screenshotIntervalCheckMs = 30 * 1000;
+const idleAutoCapturePauseMs = 5 * 60 * 1000;
 const altTabPostEndSuppressMs = 1200;
 const altTabWatchdogMs = 2500;
 
@@ -1233,18 +1265,6 @@ function analyzeContextSample(sample: ContextSampleRecord): AnalysisResult {
   });
 }
 
-function notificationFromAnalysis(
-  result: AnalysisResult,
-): NotificationScenario {
-  return {
-    scenario: result.scenario,
-    should_notify: result.should_notify,
-    notify_type: result.notify_type,
-    body: result.body,
-    button: result.button,
-  };
-}
-
 function loadStoredState(): StoredAppState {
   if (typeof window === "undefined") {
     return defaultStoredState;
@@ -1273,8 +1293,39 @@ function normalizeStoredState(state: Partial<StoredAppState>): StoredAppState {
     requestQueues: state.requestQueues ?? defaultStoredState.requestQueues,
     contextSamples: state.contextSamples ?? [],
     analysisResults: state.analysisResults ?? [],
+    testTaskAnalysisRuns: state.testTaskAnalysisRuns ?? [],
     summary: state.summary ?? null,
   };
+}
+
+function updateTestTaskAnalysisItem(
+  runs: TestTaskAnalysisRun[],
+  runId: string,
+  itemId: string,
+  updates: Partial<TestTaskAnalysisItem>,
+): TestTaskAnalysisRun[] {
+  return runs.map((run) => {
+    if (run.id !== runId) {
+      return run;
+    }
+
+    const items = run.items.map((item) =>
+      item.id === itemId ? { ...item, ...updates } : item,
+    );
+    const status: TestTaskAnalysisStatus = items.some((item) => item.status === "running")
+      ? "running"
+      : items.some((item) => item.status === "queued")
+        ? "queued"
+        : items.some((item) => item.status === "failed")
+          ? "failed"
+          : "done";
+
+    return {
+      ...run,
+      status,
+      items,
+    };
+  });
 }
 
 function App() {
@@ -1320,6 +1371,9 @@ function App() {
   const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>(
     storedState.analysisResults,
   );
+  const [testTaskAnalysisRuns, setTestTaskAnalysisRuns] = useState<
+    TestTaskAnalysisRun[]
+  >(storedState.testTaskAnalysisRuns);
   const [summary, setSummary] = useState<TaskSummary | null>(
     storedState.summary,
   );
@@ -1337,8 +1391,6 @@ function App() {
   const [apiRequestLogError, setApiRequestLogError] = useState("");
   const [activeScreenshotAnalysis, setActiveScreenshotAnalysis] =
     useState<ActiveAnalysisWork | null>(null);
-  const [activeTaskAnalysis, setActiveTaskAnalysis] =
-    useState<ActiveAnalysisWork | null>(null);
   const [queuePaused, setQueuePaused] = useState<QueuePauseState>({
     screenshot: false,
     task: false,
@@ -1355,6 +1407,9 @@ function App() {
   const lastForegroundWindowKey = useRef<string | null>(null);
   const foregroundScreenshotTimerRef = useRef<number | null>(null);
   const lastScreenshotAttemptAtRef = useRef(0);
+  const lastUserActivityAtRef = useRef(Date.now());
+  const restingRef = useRef(false);
+  const resumeFromRestRef = useRef<() => Promise<void>>(async () => undefined);
   const altTabSuppressionRef = useRef({
     active: false,
     suppressUntilMs: 0,
@@ -1367,7 +1422,9 @@ function App() {
     (trigger?: ContextSampleTrigger) => Promise<void>
   >(async () => undefined);
   const screenshotQueueProcessingRef = useRef(false);
-  const taskQueueProcessingRef = useRef(false);
+  const testTaskAnalysisProcessingRef = useRef(false);
+  const latestContextSamplesRef = useRef(contextSamples);
+  const latestTestTaskAnalysisRunsRef = useRef(testTaskAnalysisRuns);
   const latestSettingsRef = useRef(settings);
   const latestApiKeyRef = useRef(apiKey);
   const aiSettingsSaveChainRef = useRef(Promise.resolve());
@@ -1376,6 +1433,14 @@ function App() {
   useEffect(() => {
     latestSettingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    latestContextSamplesRef.current = contextSamples;
+  }, [contextSamples]);
+
+  useEffect(() => {
+    latestTestTaskAnalysisRunsRef.current = testTaskAnalysisRuns;
+  }, [testTaskAnalysisRuns]);
 
   useEffect(() => {
     latestApiKeyRef.current = apiKey;
@@ -1500,6 +1565,7 @@ function App() {
       requestQueues,
       contextSamples,
       analysisResults,
+      testTaskAnalysisRuns,
       summary,
     };
     const stateJson = JSON.stringify(stateToStore);
@@ -1521,6 +1587,7 @@ function App() {
     requestQueues,
     contextSamples,
     analysisResults,
+    testTaskAnalysisRuns,
     summary,
   ]);
 
@@ -1617,6 +1684,12 @@ function App() {
         return;
       }
 
+      if (event.payload.event_type === "activity") {
+        markUserActivity();
+        return;
+      }
+
+      markUserActivity();
       recordInputEvent(event.payload.event_type, event.payload.source);
       if (
         event.payload.event_type === "screenshot" ||
@@ -1634,6 +1707,7 @@ function App() {
     });
 
     function handleKeyDown(event: KeyboardEvent) {
+      markUserActivity();
       if (event.key === "Enter") {
         recordInputEvent("enter", "frontend_window");
         void captureContextSample("frontend_window");
@@ -1668,6 +1742,10 @@ function App() {
 
     const interval = window.setInterval(() => {
       const elapsed = Date.now() - lastScreenshotAttemptAtRef.current;
+      if (enterRestingIfIdle()) {
+        return;
+      }
+
       if (
         !lastScreenshotAttemptAtRef.current ||
         elapsed >= maximumScreenshotIntervalMs
@@ -1695,11 +1773,11 @@ function App() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       void processDueScreenshotAnalysisQueue();
-      void processDueTaskAnalysisQueue();
+      void processTestTaskAnalysisRuns();
     }, 1000);
 
     void processDueScreenshotAnalysisQueue();
-    void processDueTaskAnalysisQueue();
+    void processTestTaskAnalysisRuns();
 
     return () => window.clearInterval(interval);
   }, [
@@ -1814,6 +1892,48 @@ function App() {
     return current.active || current.suppressUntilMs > Date.now();
   }
 
+  function recordRestActivity() {
+    const recordedAt = nowLabel();
+    lastForegroundWindowKey.current = "resting";
+    clearForegroundScreenshotTimer();
+    recordActivity(
+      {
+        eventType: "switch",
+        recordedAt,
+        appName: "休息",
+        processName: "resting",
+        windowTitle: "",
+      },
+      `${recordedAt}，休息，`,
+    );
+  }
+
+  function enterRestingIfIdle() {
+    if (!hasBeenIdleLongEnough() || restingRef.current) {
+      return false;
+    }
+
+    restingRef.current = true;
+    recordRestActivity();
+    return true;
+  }
+
+  function markUserActivity(options: { resume?: boolean } = {}) {
+    lastUserActivityAtRef.current = Date.now();
+    if (restingRef.current && options.resume !== false) {
+      restingRef.current = false;
+      void resumeFromRestRef.current();
+    }
+  }
+
+  function isIdleAutoCapturePaused() {
+    return restingRef.current || hasBeenIdleLongEnough();
+  }
+
+  function hasBeenIdleLongEnough() {
+    return Date.now() - lastUserActivityAtRef.current >= idleAutoCapturePauseMs;
+  }
+
   function handleForegroundSnapshot(snapshot: ForegroundWindowSnapshot) {
     // 先做稳定目标去重：同一个前台目标连续上报时，不重复写切换日志，也不重复安排截图。
     if (isAltTabSuppressingForeground()) {
@@ -1853,6 +1973,10 @@ function App() {
     foregroundScreenshotTimerRef.current = window.setTimeout(() => {
       foregroundScreenshotTimerRef.current = null;
       if (lastForegroundWindowKey.current !== nextKey) {
+        return;
+      }
+
+      if (isIdleAutoCapturePaused()) {
         return;
       }
 
@@ -1957,31 +2081,6 @@ function App() {
     return dueAt;
   }
 
-  function enqueueTaskAnalysis(sampleId: string) {
-    // 截图摘要和详细转文字成功后，才把同一份样本送进任务分析队列。
-    // 任务分析不直接看原始图片，只看窗口、截图分析文本和任务目标。
-    const dueAt = Date.now();
-    setRequestQueues((queues) => {
-      if (queues.taskAnalysis.some((item) => item.sampleId === sampleId)) {
-        return queues;
-      }
-
-      return {
-        ...queues,
-        taskAnalysis: [
-          ...queues.taskAnalysis,
-          {
-            id: createRecordId("task-analysis"),
-            sampleId,
-            dueAt,
-            attempts: 0,
-          },
-        ],
-      };
-    });
-    return dueAt;
-  }
-
   function createActiveAnalysisWork(
     kind: AnalysisWorkKind,
     item: ScreenshotAnalysisQueueItem | TaskAnalysisQueueItem,
@@ -2018,6 +2117,24 @@ function App() {
       `样本 ${sample.id}`,
       `截图 ${sample.screenshot?.file_name ?? "未截图"}`,
       `模型 ${model || "未配置"}`,
+      `接口 ${chatCompletionsEndpointLabel(settings.apiUrl) || "未配置"}`,
+      details,
+    ].join("，");
+  }
+
+  function testTaskAnalysisRequestLogLine(
+    stage: string,
+    run: TestTaskAnalysisRun,
+    item: TestTaskAnalysisItem,
+    details: string,
+  ) {
+    return [
+      nowLabel(),
+      `测试任务分析 ${stage}`,
+      `测试 ${run.name}`,
+      `样本 ${item.sampleId}`,
+      `截图 ${item.screenshotFileName || "未截图"}`,
+      `模型 ${settings.navigationModel || "未配置"}`,
       `接口 ${chatCompletionsEndpointLabel(settings.apiUrl) || "未配置"}`,
       details,
     ].join("，");
@@ -2193,15 +2310,9 @@ function App() {
           (queueItem) => queueItem.id !== item.id,
         ),
       }));
-      const taskDueAt = enqueueTaskAnalysis(item.sampleId);
-      recordApiRequestLog(
-        apiRequestLogLine(
-          "入队",
-          "task",
-          sample,
-          `截图分析完成后已排队任务分析，预计 ${timeLabelFromTimestamp(taskDueAt)} 开始`,
-        ),
-      );
+      updateSampleRecord(item.sampleId, {
+        taskAnalysisStatus: "pending",
+      });
     } catch (error) {
       // 网络错误、API Key 错误、模型响应格式错误通常是整条截图分析通道的问题。
       // 因此失败后不让下一张图继续撞 API，而是让截图分析队列整体进入退避等待，再重发刚才这条。
@@ -2235,108 +2346,6 @@ function App() {
       // 无论成功失败，都要清空“正在处理”的标记，避免下一轮队列被锁死。
       setActiveScreenshotAnalysis(null);
       screenshotQueueProcessingRef.current = false;
-    }
-  }
-
-  async function processDueTaskAnalysisQueue() {
-    // 任务分析也是轮询拾取的：它只看“到期且还留在队列里”的样本。
-    if (queuePaused.task) {
-      return;
-    }
-
-    if (isQueueCoolingDown("task")) {
-      return;
-    }
-
-    if (taskQueueProcessingRef.current) {
-      return;
-    }
-
-    const item = requestQueues.taskAnalysis.find(
-      (queueItem) => queueItem.dueAt <= Date.now(),
-    );
-    if (!item) {
-      return;
-    }
-
-    const sample = contextSamples.find((record) => record.id === item.sampleId);
-    if (!sample) {
-      setRequestQueues((queues) => ({
-        ...queues,
-        taskAnalysis: queues.taskAnalysis.filter(
-          (queueItem) => queueItem.id !== item.id,
-        ),
-      }));
-      return;
-    }
-
-    taskQueueProcessingRef.current = true;
-    // 详情页展示当前任务分析请求。
-    setActiveTaskAnalysis(
-      createActiveAnalysisWork(
-        "task",
-        item,
-        sample,
-        settings.navigationModel,
-      ),
-    );
-    recordApiRequestLog(
-      apiRequestLogLine("开始", "task", sample, `队列项 ${item.id}`),
-    );
-    try {
-      // 任务分析拿到的是结构化 JSON 结果，成功后会继续驱动通知气泡。
-      const analysis = await analyzeSampleWithAi(sample);
-      recordApiRequestLog(
-        apiRequestLogLine("成功", "task", sample, "任务分析响应已通过结构校验"),
-      );
-      clearQueueRetryState("task");
-      updateSampleRecord(item.sampleId, {
-        taskAnalysisStatus: "analyzed",
-      });
-      updateActivityRecord(item.sampleId, {
-        analysisBody: analysis.body,
-        status: "已分析",
-      });
-      void updateActivityLogAnalysis(sample, analysis.body);
-      setAnalysisResults((records) => [analysis, ...records]);
-      triggerScenario(notificationFromAnalysis(analysis));
-      setRequestQueues((queues) => ({
-        ...queues,
-        taskAnalysis: queues.taskAnalysis.filter(
-          (queueItem) => queueItem.id !== item.id,
-        ),
-      }));
-    } catch (error) {
-      // 任务分析失败也按“队列级问题”处理：暂停整条任务分析队列，再重发刚才这条。
-      const message = String(error);
-      const retryState = recordQueueFailure("task", item, message);
-      const retryText = retryState.pausedUntil
-        ? `队列暂停到 ${timeLabelFromTimestamp(retryState.pausedUntil)} 后重发刚才任务分析`
-        : "队列将立即重发刚才任务分析";
-      recordApiRequestLog(
-        apiRequestLogLine(
-          "失败",
-          "task",
-          sample,
-          `${retryText}，错误 ${message}`,
-        ),
-      );
-      updateSampleRecord(item.sampleId, {
-        taskAnalysisStatus: "retrying",
-        error: `任务分析待重试：${retryText}。${message}`,
-      });
-      updateActivityRecord(item.sampleId, {
-        analysisBody: `任务分析待重试：${retryText}。${message}`,
-        status: "任务分析待重试",
-      });
-      void updateActivityLogAnalysis(
-        sample,
-        `任务分析待重试：${retryText}。${message}`,
-      );
-    } finally {
-      // 释放任务队列处理标记，让下一轮轮询继续接管。
-      setActiveTaskAnalysis(null);
-      taskQueueProcessingRef.current = false;
     }
   }
 
@@ -2554,6 +2563,7 @@ function App() {
     setRequestQueues(defaultStoredState.requestQueues);
     setContextSamples([]);
     setAnalysisResults([]);
+    setTestTaskAnalysisRuns([]);
     setSummary(null);
   }
 
@@ -2568,6 +2578,169 @@ function App() {
       setWindowSnapshotError(String(error));
     }
   }
+
+  function createTestTaskAnalysisRun(name: string, start: string, end: string) {
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+    if (!name.trim()) {
+      throw new Error("请填写分析测试名称。");
+    }
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+      throw new Error("请选择有效的开始时间和结束时间。");
+    }
+
+    const samples = contextSamples
+      .filter((sample) => {
+        const recordedAtMs = activityLogTimeToTimestamp(sample.recordedAt);
+        return (
+          sample.screenshot?.file_path &&
+          recordedAtMs !== undefined &&
+          recordedAtMs >= startMs &&
+          recordedAtMs <= endMs
+        );
+      })
+      .sort((left, right) => {
+        return (
+          (activityLogTimeToTimestamp(left.recordedAt) ?? 0) -
+          (activityLogTimeToTimestamp(right.recordedAt) ?? 0)
+        );
+      });
+
+    if (samples.length === 0) {
+      throw new Error("这个时间段内没有可用于任务分析的截图样本。");
+    }
+
+    const run: TestTaskAnalysisRun = {
+      id: createRecordId("test-task-analysis"),
+      name: name.trim(),
+      start,
+      end,
+      createdAt: nowLabel(),
+      status: "queued",
+      items: samples.map((sample) => ({
+        id: createRecordId("test-task-item"),
+        sampleId: sample.id,
+        recordedAt: sample.recordedAt,
+        screenshotFileName: sample.screenshot?.file_name ?? "",
+        appName: sample.window?.app_name ?? "未知应用",
+        windowTitle: sample.window ? readableWindowTitle(sample.window) : "",
+        status: "queued",
+        attempts: 0,
+      })),
+    };
+
+    setTestTaskAnalysisRuns((runs) => {
+      const nextRuns = [run, ...runs];
+      latestTestTaskAnalysisRunsRef.current = nextRuns;
+      return nextRuns;
+    });
+    return run.id;
+  }
+
+  function updateTestTaskAnalysisRunsState(
+    updater: (runs: TestTaskAnalysisRun[]) => TestTaskAnalysisRun[],
+  ) {
+    setTestTaskAnalysisRuns((runs) => {
+      const nextRuns = updater(runs);
+      latestTestTaskAnalysisRunsRef.current = nextRuns;
+      return nextRuns;
+    });
+  }
+
+  async function processTestTaskAnalysisRuns() {
+    if (testTaskAnalysisProcessingRef.current) {
+      return;
+    }
+
+    const latestRuns = latestTestTaskAnalysisRunsRef.current;
+    const run = latestRuns.find((candidate) =>
+      candidate.items.some((item) => item.status === "queued" || item.status === "running"),
+    );
+    if (!run) {
+      return;
+    }
+
+    const item = run.items.find(
+      (candidate) => candidate.status === "queued" || candidate.status === "running",
+    );
+    if (!item) {
+      return;
+    }
+
+    const sample = latestContextSamplesRef.current.find(
+      (candidate) => candidate.id === item.sampleId,
+    );
+    if (!sample) {
+      updateTestTaskAnalysisRunsState((runs) =>
+        updateTestTaskAnalysisItem(runs, run.id, item.id, {
+          status: "failed",
+          error: "样本已不存在。",
+          finishedAt: nowLabel(),
+        }),
+      );
+      return;
+    }
+
+    testTaskAnalysisProcessingRef.current = true;
+    updateTestTaskAnalysisRunsState((runs) =>
+      updateTestTaskAnalysisItem(runs, run.id, item.id, {
+        status: "running",
+        attempts: item.attempts + 1,
+        startedAt: nowLabel(),
+        rawResponse: undefined,
+        parsedBody: undefined,
+        error: undefined,
+        finishedAt: undefined,
+      }),
+    );
+    recordApiRequestLog(
+      testTaskAnalysisRequestLogLine("开始", run, item, "测试队列逐条发送"),
+    );
+
+    try {
+      const rawResult = await requestTaskAnalysisRaw(sample);
+      const parsed = validateAnalysisResult(JSON.parse(rawResult));
+      recordApiRequestLog(
+        testTaskAnalysisRequestLogLine("成功", run, item, "完整回复已保存到测试结果"),
+      );
+      updateTestTaskAnalysisRunsState((runs) =>
+        updateTestTaskAnalysisItem(runs, run.id, item.id, {
+          status: "done",
+          rawResponse: rawResult,
+          parsedBody: parsed.body,
+          finishedAt: nowLabel(),
+        }),
+      );
+    } catch (error) {
+      const message = String(error);
+      recordApiRequestLog(
+        testTaskAnalysisRequestLogLine("失败", run, item, message),
+      );
+      updateTestTaskAnalysisRunsState((runs) =>
+        updateTestTaskAnalysisItem(runs, run.id, item.id, {
+          status: "failed",
+          error: message,
+          finishedAt: nowLabel(),
+        }),
+      );
+    } finally {
+      testTaskAnalysisProcessingRef.current = false;
+    }
+  }
+
+  async function resumeFromRest() {
+    try {
+      const snapshot = await invoke<ForegroundWindowSnapshot>(
+        "get_foreground_window_snapshot",
+      );
+      lastForegroundWindowKey.current = null;
+      handleForegroundSnapshot(snapshot);
+    } catch (error) {
+      console.warn("Could not resume foreground after rest", error);
+    }
+  }
+
+  resumeFromRestRef.current = resumeFromRest;
 
   async function refreshActivityLog() {
     try {
@@ -2613,6 +2786,12 @@ function App() {
     // 3. 允许则调用 Rust 保存本机截图；
     // 4. 写 activity-log.md；
     // 5. 将截图样本放入截图分析队列。
+    const isAutomaticTrigger =
+      trigger === "foreground_switch" || trigger === "interval_fallback";
+    if (isAutomaticTrigger && enterRestingIfIdle()) {
+      return;
+    }
+
     lastScreenshotAttemptAtRef.current = Date.now();
     try {
       setWindowSnapshotError("");
@@ -2749,9 +2928,7 @@ function App() {
     });
   }
 
-  async function analyzeSampleWithAi(sample: ContextSampleRecord) {
-    // 任务导航请求。它不直接上传原图，而是上传包含截图摘要和详细转文字的 sample JSON，
-    // 并要求模型返回符合 analysisResultSchema 的结构化 JSON。
+  async function requestTaskAnalysisRaw(sample: ContextSampleRecord) {
     if (
       !settings.apiUrl.trim() ||
       !apiKey.trim() ||
@@ -2767,10 +2944,9 @@ function App() {
       context_json: JSON.stringify(sample),
       schema_json: JSON.stringify(analysisResultSchema),
     };
-    const rawResult = await invoke<string>("analyze_context_with_ai", {
+    return await invoke<string>("analyze_context_with_ai", {
       request,
     });
-    return validateAnalysisResult(JSON.parse(rawResult));
   }
 
   return (
@@ -2839,8 +3015,10 @@ function App() {
             apiRequestLogError={apiRequestLogError}
             requestQueues={requestQueues}
             contextSamples={contextSamples}
+            testTaskAnalysisRuns={testTaskAnalysisRuns}
+            createTestTaskAnalysisRun={createTestTaskAnalysisRun}
             activeScreenshotAnalysis={activeScreenshotAnalysis}
-            activeTaskAnalysis={activeTaskAnalysis}
+            activeTaskAnalysis={null}
             queuePaused={queuePaused}
             queueRetryState={queueRetryState}
             detailsTimeRange={detailsTimeRange}
@@ -3233,6 +3411,8 @@ function DetailsPage({
   apiRequestLogError,
   requestQueues,
   contextSamples,
+  testTaskAnalysisRuns,
+  createTestTaskAnalysisRun,
   activeScreenshotAnalysis,
   activeTaskAnalysis,
   queuePaused,
@@ -3254,6 +3434,8 @@ function DetailsPage({
   apiRequestLogError: string;
   requestQueues: RequestQueues;
   contextSamples: ContextSampleRecord[];
+  testTaskAnalysisRuns: TestTaskAnalysisRun[];
+  createTestTaskAnalysisRun: (name: string, start: string, end: string) => string;
   activeScreenshotAnalysis: ActiveAnalysisWork | null;
   activeTaskAnalysis: ActiveAnalysisWork | null;
   queuePaused: QueuePauseState;
@@ -3290,6 +3472,16 @@ function DetailsPage({
   const [openScreenshotPopover, setOpenScreenshotPopover] = useState<string | null>(
     null,
   );
+  const [testAnalysisName, setTestAnalysisName] = useState("");
+  const [testAnalysisStart, setTestAnalysisStart] = useState(detailsTimeRange.start);
+  const [testAnalysisEnd, setTestAnalysisEnd] = useState(detailsTimeRange.end);
+  const [testAnalysisError, setTestAnalysisError] = useState("");
+  const [selectedTestAnalysisRunId, setSelectedTestAnalysisRunId] = useState("");
+  const [openRawTestResponse, setOpenRawTestResponse] = useState<string | null>(null);
+  const selectedTestAnalysisRun =
+    testTaskAnalysisRuns.find((run) => run.id === selectedTestAnalysisRunId) ??
+    testTaskAnalysisRuns[0] ??
+    null;
   const apiLogLines = apiRequestLogContent
     .split(/\r?\n/)
     .filter((line) => line.trim() && !line.startsWith("#") && !line.startsWith("格式："))
@@ -3466,6 +3658,28 @@ function DetailsPage({
     );
   }
 
+  function submitTestTaskAnalysisRun() {
+    try {
+      setTestAnalysisError("");
+      const runId = createTestTaskAnalysisRun(
+        testAnalysisName,
+        testAnalysisStart,
+        testAnalysisEnd,
+      );
+      setSelectedTestAnalysisRunId(runId);
+      setOpenRawTestResponse(null);
+      setTestAnalysisName("");
+    } catch (error) {
+      setTestAnalysisError(String(error));
+    }
+  }
+
+  function testRunProgress(run: TestTaskAnalysisRun) {
+    const done = run.items.filter((item) => item.status === "done").length;
+    const failed = run.items.filter((item) => item.status === "failed").length;
+    return `${done}/${run.items.length} 完成${failed > 0 ? `，${failed} 失败` : ""}`;
+  }
+
   function queueStatusLabel(kind: AnalysisWorkKind, activeWork: ActiveAnalysisWork | null) {
     const retryState = queueRetryState[kind];
     if (queuePaused[kind]) {
@@ -3487,20 +3701,20 @@ function DetailsPage({
         <p className="eyebrow">请求队列</p>
         <h2>截图与任务分析进度</h2>
         <p className="muted">
-          这里显示内存中的分析队列。截图先进入截图分析队列，截图摘要和详细转文字成功后再进入任务分析队列。
+          这里显示内存中的分析队列。正式任务分析已关闭；截图分析仍会返回摘要和详细转文字。
         </p>
         <div className="queue-summary">
           <span>截图分析排队 {requestQueues.screenshotAnalysis.length} 个</span>
-          <span>任务分析排队 {requestQueues.taskAnalysis.length} 个</span>
+          <span>正式任务分析已关闭</span>
           <span>{queueStatusLabel("screenshot", activeScreenshotAnalysis)}</span>
-          <span>{queueStatusLabel("task", activeTaskAnalysis)}</span>
+          <span>测试任务分析独立运行</span>
         </div>
         <div className="queue-active-grid">
           <div className="queue-active">
             {renderActiveWork(activeScreenshotAnalysis, "当前没有正在请求的截图分析。")}
           </div>
           <div className="queue-active">
-            {renderActiveWork(activeTaskAnalysis, "当前没有正在请求的任务分析。")}
+            {renderActiveWork(activeTaskAnalysis, "正式任务分析已关闭。")}
           </div>
         </div>
         <div className="queue-columns">
@@ -3517,6 +3731,124 @@ function DetailsPage({
             </ul>
           </div>
         </div>
+      </section>
+
+      <section className="card wide">
+        <p className="eyebrow">测试专用</p>
+        <h2>任务分析测试</h2>
+        <p className="muted">
+          选择一段时间，把这段期间已有截图样本按时间顺序逐条发送给任务导航模型。结果只保存在这里，不写入正式任务分析。
+        </p>
+        <div className="activity-time-controls test-analysis-controls">
+          <label>
+            名称
+            <input
+              value={testAnalysisName}
+              onChange={(event) => setTestAnalysisName(event.currentTarget.value)}
+              placeholder="例如：晚上截图任务分析测试"
+            />
+          </label>
+          <label>
+            起始
+            <input
+              type="datetime-local"
+              value={testAnalysisStart}
+              onChange={(event) => setTestAnalysisStart(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            结束
+            <input
+              type="datetime-local"
+              value={testAnalysisEnd}
+              onChange={(event) => setTestAnalysisEnd(event.currentTarget.value)}
+            />
+          </label>
+          <button className="primary-button" onClick={submitTestTaskAnalysisRun}>
+            新增分析
+          </button>
+        </div>
+        {testAnalysisError && <p className="error-text">{testAnalysisError}</p>}
+        {testTaskAnalysisRuns.length === 0 ? (
+          <p className="muted">还没有测试任务分析。</p>
+        ) : (
+          <div className="test-analysis-viewer">
+            <label className="test-analysis-select">
+              查看分析
+              <select
+                value={selectedTestAnalysisRun?.id ?? ""}
+                onChange={(event) => {
+                  setSelectedTestAnalysisRunId(event.currentTarget.value);
+                  setOpenRawTestResponse(null);
+                }}
+              >
+                {testTaskAnalysisRuns.map((run) => (
+                  <option value={run.id} key={run.id}>
+                    {run.name} · {run.createdAt} · {testRunProgress(run)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedTestAnalysisRun && (
+              <div className="activity-log-table-wrap">
+                <table className="activity-log-table">
+                  <thead>
+                    <tr>
+                      <th>时间</th>
+                      <th>应用</th>
+                      <th>窗口</th>
+                      <th>截图</th>
+                      <th>分析结果</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="app-break">
+                      <td>{selectedTestAnalysisRun.createdAt}</td>
+                      <td>{selectedTestAnalysisRun.name}</td>
+                      <td>
+                        {selectedTestAnalysisRun.start} 到 {selectedTestAnalysisRun.end}
+                      </td>
+                      <td>{testRunProgress(selectedTestAnalysisRun)}</td>
+                      <td>{selectedTestAnalysisRun.status}</td>
+                    </tr>
+                    {selectedTestAnalysisRun.items.map((item) => {
+                      const isOpen = openRawTestResponse === item.id;
+                      return (
+                        <tr key={item.id}>
+                          <td>{item.recordedAt}</td>
+                          <td>{item.appName}</td>
+                          <td>{item.windowTitle}</td>
+                          <td>{item.screenshotFileName}</td>
+                          <td>
+                            <div className="test-analysis-result-cell">
+                              <strong>{item.status}</strong>
+                              {item.parsedBody && <p>{item.parsedBody}</p>}
+                              {item.error && <em>{item.error}</em>}
+                              {item.status !== "running" && item.rawResponse && (
+                                <button
+                                  className="screenshot-link-button"
+                                  type="button"
+                                  onClick={() =>
+                                    setOpenRawTestResponse(isOpen ? null : item.id)
+                                  }
+                                >
+                                  {isOpen ? "收起完整回复" : "查看完整回复"}
+                                </button>
+                              )}
+                              {isOpen && item.status !== "running" && item.rawResponse && (
+                                <pre className="api-log-preview">{item.rawResponse}</pre>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="card wide">

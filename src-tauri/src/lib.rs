@@ -292,28 +292,29 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
 
     let endpoint = chat_completions_endpoint(&request.api_url);
     let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": request.model,
+        "temperature": 0.2,
+        "response_format": { "type": "json_object" },
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是 SuperGuider 的低打扰任务引导分析器。必须只返回一个符合 schema 的 JSON 对象，不要 Markdown。JSON 字段名保持 schema 原样；body、basis、scenario、notify_type 等所有可读内容必须使用简体中文，用户看不懂英文。证据不足时 should_notify=false。"
+            },
+            {
+                "role": "user",
+                "content": format!(
+                    "Schema:\n{}\n\n上下文：\n{}\n\n请判断现在是否需要提醒用户。证据不足时 should_notify=false。所有解释必须使用简体中文。",
+                    request.schema_json,
+                    request.context_json
+                )
+            }
+        ]
+    });
     let response = client
-        .post(endpoint)
+        .post(&endpoint)
         .bearer_auth(request.api_key)
-        .json(&serde_json::json!({
-            "model": request.model,
-            "temperature": 0.2,
-            "response_format": { "type": "json_object" },
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是 SuperGuider 的低打扰任务引导分析器。必须只返回一个符合 schema 的 JSON 对象，不要 Markdown。JSON 字段名保持 schema 原样；body、basis、scenario、notify_type 等所有可读内容必须使用简体中文，用户看不懂英文。证据不足时 should_notify=false。"
-                },
-                {
-                    "role": "user",
-                    "content": format!(
-                        "Schema:\n{}\n\n上下文：\n{}\n\n请判断现在是否需要提醒用户。证据不足时 should_notify=false。所有解释必须使用简体中文。",
-                        request.schema_json,
-                        request.context_json
-                    )
-                }
-            ]
-        }))
+        .json(&request_body)
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -321,6 +322,23 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
     let status = response.status();
     let content_type = response_content_type(&response);
     let body = response.text().await.map_err(|error| error.to_string())?;
+    let parsed_value = parse_chat_completions_response("任务分析", status, &content_type, &body);
+    let model_content = parsed_value
+        .as_ref()
+        .ok()
+        .and_then(|value| value.pointer("/choices/0/message/content"))
+        .and_then(|content| content.as_str())
+        .unwrap_or("");
+    let _ = append_model_api_exchange_log(ModelApiExchangeLog {
+        label: "任务分析",
+        endpoint: &endpoint,
+        model: &request.model,
+        status,
+        content_type: &content_type,
+        request_body: &request_body,
+        response_body: &body,
+        model_content,
+    });
     if !status.is_success() {
         // 非 2xx 直接返回可读错误，尽量把状态码、Content-Type 和响应前缀带回来。
         return Err(format!(
@@ -329,7 +347,7 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
         ));
     }
 
-    let value = parse_chat_completions_response("任务分析", status, &content_type, &body)?;
+    let value = parsed_value?;
     value
         .pointer("/choices/0/message/content")
         .and_then(|content| content.as_str())
@@ -364,38 +382,39 @@ async fn analyze_screenshot_with_ai(
     let mime_type = image_mime_type(&request.screenshot_path);
     let endpoint = chat_completions_endpoint(&request.api_url);
     let client = reqwest::Client::new();
-    let response = client
-        .post(endpoint)
-        .bearer_auth(request.api_key)
-        .json(&serde_json::json!({
-            "model": request.model,
-            "temperature": 0.2,
-            "response_format": { "type": "json_object" },
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "你是 SuperGuider 的截图理解模型。你必须只返回一个 JSON 对象，不要 Markdown，不要代码块，不要额外解释。字段必须是 summary 和 detailText。summary 用简体中文写 2-5 句摘要。detailText 用简体中文尽可能完整转写截图内容，不要丢信息：包括应用/窗口、页面结构、可见 UI 元素、按钮、列表、表格、图标含义、颜色/状态、文字内容、数字、错误提示、选中项、输入框内容，以及可能和用户任务有关的线索。看不清的内容标注“看不清”，不要凭空编造。"
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": format!(
-                                "请分析这张截图，并严格返回 JSON：{{\"summary\":\"2-5句摘要\",\"detailText\":\"详细转文字版\"}}。detailText 要尽量保留所有可见信息，供后续程序抽取使用。上下文如下：\n{}",
-                                request.context_json
-                            )
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": format!("data:{mime_type};base64,{encoded_image}")
-                            }
+    let request_body = serde_json::json!({
+        "model": request.model,
+        "temperature": 0.2,
+        "response_format": { "type": "json_object" },
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是 SuperGuider 的截图理解模型。你必须只返回一个 JSON 对象，不要 Markdown，不要代码块，不要额外解释。字段必须是 summary 和 detailText。summary 用简体中文写 2-5 句摘要。detailText 用简体中文尽可能完整转写截图内容，不要丢信息：包括应用/窗口、页面结构、可见 UI 元素、按钮、列表、表格、图标含义、颜色/状态、文字内容、数字、错误提示、选中项、输入框内容，以及可能和用户任务有关的线索。看不清的内容标注“看不清”，不要凭空编造。"
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": format!(
+                            "请分析这张截图，并严格返回 JSON：{{\"summary\":\"2-5句摘要\",\"detailText\":\"详细转文字版\"}}。detailText 要尽量保留所有可见信息，供后续程序抽取使用。上下文如下：\n{}",
+                            request.context_json
+                        )
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:{mime_type};base64,{encoded_image}")
                         }
-                    ]
-                }
-            ]
-        }))
+                    }
+                ]
+            }
+        ]
+    });
+    let response = client
+        .post(&endpoint)
+        .bearer_auth(request.api_key)
+        .json(&request_body)
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -403,6 +422,23 @@ async fn analyze_screenshot_with_ai(
     let status = response.status();
     let content_type = response_content_type(&response);
     let body = response.text().await.map_err(|error| error.to_string())?;
+    let parsed_value = parse_chat_completions_response("截图分析", status, &content_type, &body);
+    let model_content = parsed_value
+        .as_ref()
+        .ok()
+        .and_then(|value| value.pointer("/choices/0/message/content"))
+        .and_then(|content| content.as_str())
+        .unwrap_or("");
+    let _ = append_model_api_exchange_log(ModelApiExchangeLog {
+        label: "截图分析",
+        endpoint: &endpoint,
+        model: &request.model,
+        status,
+        content_type: &content_type,
+        request_body: &request_body,
+        response_body: &body,
+        model_content,
+    });
     if !status.is_success() {
         // 这里最常见的失败是 401、403 或网关返回 HTML/空文本，所以把原始响应前缀一起写进错误。
         return Err(format!(
@@ -411,7 +447,7 @@ async fn analyze_screenshot_with_ai(
         ));
     }
 
-    let value = parse_chat_completions_response("截图分析", status, &content_type, &body)?;
+    let value = parsed_value?;
     let content = value
         .pointer("/choices/0/message/content")
         .and_then(|content| content.as_str())
@@ -636,6 +672,24 @@ fn local_date_label() -> String {
     "1970-01-01".to_string()
 }
 
+#[cfg(windows)]
+fn local_date_time_label() -> String {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+
+    unsafe {
+        let time = GetLocalTime();
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond
+        )
+    }
+}
+
+#[cfg(not(windows))]
+fn local_date_time_label() -> String {
+    "1970-01-01 00:00:00".to_string()
+}
+
 fn append_api_request_log(line: &str) -> Result<(), String> {
     // API 请求日志也是只追加不覆盖，方便保留最近每一次请求/重试/失败原因。
     let path = api_request_log_path()?;
@@ -662,6 +716,68 @@ fn append_api_request_log(line: &str) -> Result<(), String> {
     }
 
     writeln!(file, "{line}").map_err(|error| error.to_string())
+}
+
+struct ModelApiExchangeLog<'a> {
+    label: &'a str,
+    endpoint: &'a str,
+    model: &'a str,
+    status: reqwest::StatusCode,
+    content_type: &'a str,
+    request_body: &'a serde_json::Value,
+    response_body: &'a str,
+    model_content: &'a str,
+}
+
+fn append_model_api_exchange_log(entry: ModelApiExchangeLog<'_>) -> Result<(), String> {
+    // 这里记录真正可复盘的模型调用：完整请求提示词、响应原文、提取出的 message.content。
+    // API Key 不在请求 body 里；图片 base64 会脱敏成长度说明，避免日志膨胀到不可用。
+    let sanitized_request =
+        serde_json::to_string_pretty(&sanitize_api_log_json(entry.request_body))
+            .map_err(|error| error.to_string())?;
+    let line = format!(
+        "\n## {} {}\n\n- endpoint: {}\n- model: {}\n- status: {}\n- content-type: {}\n\n### request\n\n```json\n{}\n```\n\n### response_body\n\n```json\n{}\n```\n\n### model_message_content\n\n```json\n{}\n```\n",
+        local_date_time_label(),
+        entry.label,
+        entry.endpoint,
+        entry.model,
+        entry.status,
+        entry.content_type,
+        sanitized_request,
+        entry.response_body,
+        entry.model_content
+    );
+    append_api_request_log(&line)
+}
+
+fn sanitize_api_log_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sanitized = serde_json::Map::new();
+            for (key, child) in map {
+                if key == "url" {
+                    if let Some(text) = child.as_str() {
+                        if text.starts_with("data:") && text.contains(";base64,") {
+                            sanitized.insert(
+                                key.clone(),
+                                serde_json::Value::String(format!(
+                                    "[image data url omitted, {} chars]",
+                                    text.chars().count()
+                                )),
+                            );
+                            continue;
+                        }
+                    }
+                }
+                sanitized.insert(key.clone(), sanitize_api_log_json(child));
+            }
+            serde_json::Value::Object(sanitized)
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(sanitize_api_log_json).collect())
+        }
+        _ => value.clone(),
+    }
 }
 
 fn update_activity_log_screenshot_analysis(
@@ -1512,7 +1628,7 @@ pub fn run() {
 
 #[cfg(windows)]
 fn start_global_input_listener(app_handle: tauri::AppHandle) {
-    // 全局键盘监听：捕获 Enter、Ctrl+C 和 Alt+Tab 时段。
+    // 全局输入监听：捕获 Enter、Ctrl+C、Alt+Tab 时段，以及普通键鼠活动。
     // hook 回调只负责发事件，不做截图和网络请求，避免阻塞系统输入。
     use std::sync::mpsc;
     use std::sync::OnceLock;
@@ -1522,8 +1638,9 @@ fn start_global_input_listener(app_handle: tauri::AppHandle) {
         VK_RMENU, VK_TAB,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetMessageW, SetWindowsHookExW, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
-        WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        CallNextHookEx, GetMessageW, SetWindowsHookExW, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG,
+        WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
+        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     static GLOBAL_INPUT_SENDER: OnceLock<mpsc::Sender<GlobalInputEvent>> = OnceLock::new();
@@ -1545,6 +1662,8 @@ fn start_global_input_listener(app_handle: tauri::AppHandle) {
                 Some("alt_tab_pulse")
             } else if is_key_up && is_alt_key(keyboard.vkCode) {
                 Some("alt_tab_end")
+            } else if is_key_down {
+                Some("activity")
             } else {
                 None
             };
@@ -1552,7 +1671,28 @@ fn start_global_input_listener(app_handle: tauri::AppHandle) {
             if let (Some(event_type), Some(sender)) = (event_type, GLOBAL_INPUT_SENDER.get()) {
                 let _ = sender.send(GlobalInputEvent {
                     event_type: event_type.to_string(),
-                    source: "windows_global_keyboard_hook".to_string(),
+                    source: "windows_global_input_hook".to_string(),
+                });
+            }
+        }
+
+        CallNextHookEx(None, code, wparam, lparam)
+    }
+
+    unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        // 鼠标移动和点击只刷新“用户仍活跃”的时间，不进入活动日志。
+        let message = wparam.0 as u32;
+        let is_activity = matches!(
+            message,
+            WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_MOUSEWHEEL
+        );
+
+        if code >= 0 && is_activity {
+            let _mouse = *(lparam.0 as *const MSLLHOOKSTRUCT);
+            if let Some(sender) = GLOBAL_INPUT_SENDER.get() {
+                let _ = sender.send(GlobalInputEvent {
+                    event_type: "activity".to_string(),
+                    source: "windows_global_input_hook".to_string(),
                 });
             }
         }
@@ -1591,8 +1731,12 @@ fn start_global_input_listener(app_handle: tauri::AppHandle) {
     });
 
     std::thread::spawn(move || unsafe {
-        // 安装 Windows 低级键盘 hook，并用消息循环保持 hook 存活。
-        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0) {
+        // 安装 Windows 低级键盘/鼠标 hook，并用消息循环保持 hook 存活。
+        let keyboard_hook_handle = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), None, 0) {
+            Ok(hook) => hook,
+            Err(_) => return,
+        };
+        let mouse_hook_handle = match SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook), None, 0) {
             Ok(hook) => hook,
             Err(_) => return,
         };
@@ -1600,7 +1744,8 @@ fn start_global_input_listener(app_handle: tauri::AppHandle) {
         let mut message = MSG::default();
         while GetMessageW(&mut message, None, 0, 0).as_bool() {}
 
-        let _ = hook;
+        let _ = keyboard_hook_handle;
+        let _ = mouse_hook_handle;
     });
 }
 
