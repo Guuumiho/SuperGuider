@@ -276,18 +276,18 @@ fn write_private_settings(settings: &PrivateSettings) -> Result<(), String> {
 
 #[tauri::command]
 async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, String> {
-    // 任务导航分析：输入是样本 JSON，输出应为符合 schema 的结构化 JSON。
-    // 这条链路不看原图，主要看当前窗口、任务目标、截图摘要这些上下文。
+    // Task analysis consumes the frontend-built JSON context and asks the model for
+    // task/step memory updates plus one optional popup decision.
     if request.api_url.trim().is_empty() {
-        return Err("API URL 不能为空。".to_string());
+        return Err("API URL \u{4E0D}\u{80FD}\u{4E3A}\u{7A7A}\u{3002}".to_string());
     }
 
     if request.api_key.trim().is_empty() {
-        return Err("API Key 不能为空。".to_string());
+        return Err("API Key \u{4E0D}\u{80FD}\u{4E3A}\u{7A7A}\u{3002}".to_string());
     }
 
     if request.model.trim().is_empty() {
-        return Err("任务导航模型不能为空。".to_string());
+        return Err("\u{4EFB}\u{52A1}\u{5BFC}\u{822A}\u{6A21}\u{578B}\u{4E0D}\u{80FD}\u{4E3A}\u{7A7A}\u{3002}".to_string());
     }
 
     let endpoint = chat_completions_endpoint(&request.api_url);
@@ -299,12 +299,12 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
         "messages": [
             {
                 "role": "system",
-                "content": "你是 SuperGuider 的低打扰任务引导分析器。必须只返回一个符合 schema 的 JSON 对象，不要 Markdown。JSON 字段名保持 schema 原样；body、basis、scenario、notify_type 等所有可读内容必须使用简体中文，用户看不懂英文。证据不足时 should_notify=false。"
+                "content": "You are SuperGuider task-memory aggregation and low-interruption guidance analyst. The input is a one-minute batch named currentBatch, which may contain multiple screenshot samples. Use the existing taskMemory to decide whether each meaningful activity belongs to an existing task/step or requires a new task/step. Task assignment and step assignment are mandatory outputs; notification is optional. A single response may include multiple results entries. If the minute contains multiple tasks or multiple steps, split them into multiple results entries. The local app will only write according to your returned task_id, step_id, decision, and memory_update; it will not do semantic similarity matching. Return only one JSON object that conforms to the schema. Do not use Markdown. All user-readable field values such as task_label, step_label, step_summary, basis, reason, body, and new_facts must be written in Simplified Chinese. Do not turn information already directly visible in the screenshots into a popup notification; that information may only be used in basis or memory_update.new_facts."
             },
             {
                 "role": "user",
                 "content": format!(
-                    "Schema:\n{}\n\n上下文：\n{}\n\n请判断现在是否需要提醒用户。证据不足时 should_notify=false。所有解释必须使用简体中文。",
+                    "Schema:\n{}\n\nContext:\n{}\n\nAnalyze this batch as follows:\n1. First inspect taskMemory. Prefer existing task_id / step_id when suitable; only use decision=new when no existing item fits.\n2. Analyze currentBatch.samples as a one-minute batch. Do not return repetitive results for near-duplicate screenshots.\n3. If this minute contains multiple tasks or multiple steps, return multiple entries in results.\n4. Every results[] entry must contain task_assignment, step_assignment, memory_update, and basis.\n5. notification is one batch-level popup decision, not one notification per screenshot. If there is no concrete useful suggestion, set should_notify=false.\n6. scenario, notify_type, and button must use schema enums and notificationTemplates only. Do not invent values.",
                     request.schema_json,
                     request.context_json
                 )
@@ -322,7 +322,7 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
     let status = response.status();
     let content_type = response_content_type(&response);
     let body = response.text().await.map_err(|error| error.to_string())?;
-    let parsed_value = parse_chat_completions_response("任务分析", status, &content_type, &body);
+    let parsed_value = parse_chat_completions_response("\u{4EFB}\u{52A1}\u{5206}\u{6790}", status, &content_type, &body);
     let model_content = parsed_value
         .as_ref()
         .ok()
@@ -330,7 +330,7 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
         .and_then(|content| content.as_str())
         .unwrap_or("");
     let _ = append_model_api_exchange_log(ModelApiExchangeLog {
-        label: "任务分析",
+        label: "\u{4EFB}\u{52A1}\u{5206}\u{6790}",
         endpoint: &endpoint,
         model: &request.model,
         status,
@@ -340,9 +340,9 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
         model_content,
     });
     if !status.is_success() {
-        // 非 2xx 直接返回可读错误，尽量把状态码、Content-Type 和响应前缀带回来。
+        // Non-2xx responses keep status/content-type/body preview for troubleshooting.
         return Err(format!(
-            "任务分析请求失败，状态 {status}，Content-Type {content_type}：{}",
+            "\u{4EFB}\u{52A1}\u{5206}\u{6790}\u{8BF7}\u{6C42}\u{5931}\u{8D25}\u{FF0C}\u{72B6}\u{6001} {status}\u{FF0C}Content-Type {content_type}\u{FF1A}{}",
             response_body_preview(&body)
         ));
     }
@@ -352,7 +352,7 @@ async fn analyze_context_with_ai(request: AiAnalysisRequest) -> Result<String, S
         .pointer("/choices/0/message/content")
         .and_then(|content| content.as_str())
         .map(|content| content.to_string())
-        .ok_or_else(|| "任务分析响应没有返回 choices[0].message.content。".to_string())
+        .ok_or_else(|| "\u{4EFB}\u{52A1}\u{5206}\u{6790}\u{54CD}\u{5E94}\u{6CA1}\u{6709}\u{8FD4}\u{56DE} choices[0].message.content\u{3002}".to_string())
 }
 
 #[tauri::command]
@@ -389,7 +389,7 @@ async fn analyze_screenshot_with_ai(
         "messages": [
             {
                 "role": "system",
-                "content": "你是 SuperGuider 的截图理解模型。你必须只返回一个 JSON 对象，不要 Markdown，不要代码块，不要额外解释。字段必须是 summary 和 detailText。summary 用简体中文写 2-5 句摘要。detailText 用简体中文尽可能完整转写截图内容，不要丢信息：包括应用/窗口、页面结构、可见 UI 元素、按钮、列表、表格、图标含义、颜色/状态、文字内容、数字、错误提示、选中项、输入框内容，以及可能和用户任务有关的线索。看不清的内容标注“看不清”，不要凭空编造。"
+                "content": "你是 SuperGuider 的截图理解模型。你必须只返回一个 JSON 对象，不要 Markdown，不要代码块，不要额外解释。字段必须是 summary 和 detailText。summary 用简体中文写目前用户正在做什么，如果是聊天窗特别注意用户刚发出去的那条信息。detailText 用简体中文尽可能完整转写截图内容，不要丢信息：包括应用/窗口、页面结构、可见 UI 元素、按钮、列表、表格、图标含义、颜色/状态、文字内容、数字、错误提示、选中项、输入框内容，以及可能和用户任务有关的线索。看不清的内容标注“看不清”，不要凭空编造。"
             },
             {
                 "role": "user",
@@ -397,7 +397,7 @@ async fn analyze_screenshot_with_ai(
                     {
                         "type": "text",
                         "text": format!(
-                            "请分析这张截图，并严格返回 JSON：{{\"summary\":\"2-5句摘要\",\"detailText\":\"详细转文字版\"}}。detailText 要尽量保留所有可见信息，供后续程序抽取使用。上下文如下：\n{}",
+                            "请分析这张截图，并严格返回 JSON：{{\"summary\":\"用户正在做什么或者看什么\",\"detailText\":\"详细转文字版\"}}。detailText 要尽量保留所有可见信息，供后续程序抽取使用。上下文如下：\n{}",
                             request.context_json
                         )
                     },

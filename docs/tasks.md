@@ -1,128 +1,45 @@
-# SuperGuider MVP Tasks
+# SuperGuider 任务清单
 
-## Milestone 1: Project Initialization
+更新时间：2026-06-28
 
-- [x] Scaffold Tauri + React + TypeScript project.
-- [x] Install npm dependencies.
-- [x] Run frontend build.
-- [x] Run Rust cargo check.
-- [x] Replace starter README with SuperGuider notes.
+## 已完成
 
-## Milestone 2: App Panel
+- [x] Tauri + React + TypeScript 项目初始化。
+- [x] 状态页 / 详情页 / 设置页。
+- [x] 任务创建和静默陪伴模式。
+- [x] 右下角通知气泡和纠偏记录。
+- [x] 本机 private settings、localStorage、SQLite 状态保存。
+- [x] 应用权限列表、待确认应用、加入/拒绝持久化。
+- [x] API/模型设置和应用监控设置分区保存。
+- [x] Windows 前台窗口监听。
+- [x] Windows 全局键鼠 hook。
+- [x] Enter、Ctrl+C、稳定前台、三分钟兜底、手动采样触发上下文采样。
+- [x] 真实截图落盘。
+- [x] 截图理解模型请求。
+- [x] 截图理解返回摘要、详细转文字、鼠标悬停点。
+- [x] 活动日志写入与详情页表格展示。
+- [x] API 请求日志记录完整模型请求和回复。
+- [x] 队列暂停/开始、立即重发、队列级冷却重试。
+- [x] 详情页测试任务分析模块。
+- [x] 测试任务分析按分钟批处理。
+- [x] 任务分析 `results[]` 多任务/多阶段 schema。
+- [x] 静默陪伴下清除假任务目标：`taskGoal = null`、`taskGoalSource = none`。
+- [x] Explorer shell 空状态过滤。
+- [x] Alt+Tab 抑制。
+- [x] 5 分钟无键鼠活动进入休息期。
+- [x] 初步代码拆分：设置、日志、测试模块。
+- [x] 新增 function 级功能索引文档。
 
-- [x] Replace starter UI.
-- [x] Add `Status` navigation item.
-- [x] Add `Settings` navigation item.
-- [x] Implement page switching.
-- [x] Show silent companion empty state.
+## 未完成 / 后续优化
 
-## Milestone 3: Settings Page
+- [ ] 继续拆分 `src/App.tsx` 的分析模块、队列模块、页面组件。
+- [ ] 为纯函数模块补自动化单元测试。
+- [ ] 完善通知质量：少废话、少打扰、只给具体有效建议。
+- [ ] 正式自动任务分析恢复策略。
+- [ ] 开机自启动、打包安装方案。
+- [ ] 更细的 UI 状态可视化：当前请求、排队批次、失败原因、最近原始回复。
 
-- [x] Add API URL field.
-- [x] Add API Key field.
-- [x] Add screenshot understanding model field.
-- [x] Add task navigation model field.
-- [x] Add initialization status.
-- [x] Save settings in local state.
+## 当前验证
 
-## Milestone 4: Task Creation
-
-- [x] Add `开启任务追踪` button.
-- [x] Add task creation form.
-- [x] Validate task description.
-- [x] Validate deadline.
-- [x] Store active task.
-- [x] Show task tracking status.
-
-## Milestone 5: Mock Task Plan
-
-- [x] Load built-in demo task plan data.
-- [x] Display reference stages.
-- [x] Display plan `body`.
-
-## Milestone 6: Mock Analysis Buttons
-
-- [x] Add stuck mock button.
-- [x] Add off-track mock button.
-- [x] Add over-optimizing mock button.
-- [x] Add no-notify mock button.
-- [x] Store latest mock result.
-
-## Milestone 7: Orb Notification
-
-- [x] Create orb component.
-- [x] Create notification bubble component.
-- [x] Read `should_notify`.
-- [x] Read `body`.
-- [x] Map `button` to correction UI.
-- [x] Hide bubble for no-notify mock.
-
-## Milestone 8: Notification Lifecycle
-
-- [x] Auto-dismiss after 10 seconds.
-- [x] Pause timer on hover.
-- [x] Record auto-dismiss.
-- [x] Record correction clicks.
-- [x] Show latest notification record.
-
-## Milestone 9: Task End
-
-- [x] Add end task button.
-- [x] Add confirmation.
-- [x] Load built-in demo task summary data.
-- [x] Show summary.
-- [x] Return to silent companion.
-
-## Milestone 10: Local Persistence
-
-- [x] Persist settings in `localStorage`.
-- [x] Persist active task in `localStorage`.
-- [x] Persist notification records in `localStorage`.
-- [x] Persist task summary in `localStorage`.
-- [x] Add a reset demo data button.
-
-## Later
-
-- [x] Add Rust command placeholder for foreground window snapshot.
-- [x] Show foreground window snapshot in Status page debug area.
-- [x] Replace foreground window mock with real Windows API.
-- [x] Add frontend-window Ctrl+C / Enter listener.
-- [x] Record frontend-window input events in local state.
-- [x] Replace frontend-window input listener with global Windows hook.
-- [x] Route global Enter and Ctrl+C through the shared context sampling path.
-- [x] Trigger context sampling after the normalized foreground target remains stable for 3 seconds.
-- [x] Add a maximum three-minute fallback sampling attempt.
-- [x] Add Rust screenshot capture command placeholder.
-- [x] Show screenshot command result in Status page debug area.
-- [x] Replace screenshot placeholder with real capture.
-- [x] Enqueue screenshot understanding after capture and write retry reasons back to the activity log.
-- [x] Make screenshot understanding return both a 2-5 sentence summary and a detailed text transcription for future extraction.
-- [x] Add test-only pause/start controls for screenshot analysis and task analysis queues.
-- [x] Move API failure retry from per-item due times to queue-level cooldown and resend the just-failed item first.
-- [x] SQLite.
-- [x] Real AI.
-- [x] JSON Schema.
-- [x] Show Explorer folder path when available.
-- [x] Hide Explorer system titles such as `任务切换`.
-- [x] Rename activity detail table `分析` column to `内容`.
-- [x] Add activity-log start/end time range controls with a `今天` shortcut and mode-based defaults.
-- [x] Filter Explorer shell-transition foreground states so blank desktop/task-switch noise does not become activity rows or screenshots.
-- [x] Suppress foreground logging and stable screenshots during Alt+Tab switching windows.
-- [x] Add global keyboard/mouse activity tracking and a 5-minute `休息` period that pauses automatic screenshots.
-- [x] Disable formal task analysis to avoid token waste.
-- [x] Add test-only task analysis runs with name selection, time range selection, isolated results, and expandable raw model responses.
-- [x] Expand API request logging to include sanitized request prompts, raw responses, and extracted model message content.
-- [x] Move terminal title/command display from `窗口` to `内容`.
-- [ ] Improve task-analysis notification quality: avoid obvious API/config failure reminders, remove annoying filler copy, and do not force template-specific correction buttons for non-template scenarios.
-- [x] De-emphasize not-allowed app rows and leave screenshot/content empty.
-- [x] Persist confirmed app permission decisions without reverting them to new-app pending state.
-- [x] Normalize duplicate app permission records and prefer confirmed user decisions.
-- [x] Split private settings saves so app monitoring changes cannot overwrite API URL, API Key, or model fields.
-- [x] Move app monitoring to the top of Settings and isolate API/model fields in their own saved block.
-- [x] Disable API/model saving until local private settings have been loaded.
-- [x] Filter normalized empty activity rows from the details table.
-- [x] Deduplicate Explorer empty/system foreground states before writing switch records.
-- [x] Document repeated fast app switching protection as an iteration item.
-- [ ] Implement repeated fast app switching protection.
-- [ ] Verify the test-only task-analysis module in the running app after the full API log change.
-- [ ] Commit and push the rest-period/test-analysis/API-log iteration.
+- 前端：`npm run build`
+- Rust：`cargo check`

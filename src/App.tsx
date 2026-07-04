@@ -5,9 +5,40 @@ import {
   analysisResultSchema,
   type AnalysisResult,
   type NotifyButton,
+  type NotificationDecision,
+  type TaskAnalysisItemResult,
+  type TaskAssignment,
+  type StepAssignment,
   validateAnalysisResult,
 } from "./aiContract";
 import "./App.css";
+import {
+  aiSettingsFingerprint,
+  appPermissionsFingerprint,
+  areSameAppPermission,
+  canSampleApp,
+  findAppPermission,
+  isWeChatApp,
+  mergeAppPermissions,
+  mergePermissionIntoList,
+  normalizeAppPermissions,
+  permissionFromSnapshot,
+  type AppPermission,
+  type DetectedApp,
+  type Settings,
+} from "./modules/settings";
+import {
+  isAppPermissionBlockStatus,
+  isExplorerSystemWindowTitle,
+  isShellOnlyForegroundSnapshot,
+  parseActivityLogTable,
+  type ActivityLogTableRow,
+} from "./modules/logs";
+import {
+  updateTestTaskAnalysisItem,
+  type TestTaskAnalysisItem,
+  type TestTaskAnalysisRun,
+} from "./modules/testAnalysis";
 
 type Page = "status" | "details" | "settings";
 type AppMode = "silent_companion" | "task_tracking";
@@ -35,13 +66,7 @@ type ReferencePlan = {
   reference_stages: ReferenceStage[];
 };
 
-type NotificationScenario = {
-  scenario: string;
-  should_notify: boolean;
-  notify_type: string;
-  body: string;
-  button: NotifyButton;
-};
+type NotificationScenario = NotificationDecision;
 
 type TaskSummary = {
   scenario: string;
@@ -80,15 +105,6 @@ type GlobalInputEvent = {
   source: InputEventRecord["source"];
 };
 
-// 这份设置会被拆成两个保存区：API/模型字段单独保存，应用监控权限单独保存。
-// 这样用户改应用监控时，不会把 API URL/API Key/模型误覆盖成空值。
-type Settings = {
-  apiUrl: string;
-  screenshotModel: string;
-  navigationModel: string;
-  appPermissions: AppPermission[];
-};
-
 type AiAnalysisRequest = {
   api_url: string;
   api_key: string;
@@ -108,6 +124,7 @@ type ScreenshotAnalysisRequest = {
 type ScreenshotAnalysisResult = {
   summary: string;
   detailText: string;
+  hoverPoint: string;
 };
 
 type PrivateSettings = {
@@ -122,20 +139,41 @@ type SettingsSaveStatus = "idle" | "saving" | "saved" | "error";
 type AiSettingsSaveStatus = SettingsSaveStatus;
 type AppPermissionsSaveStatus = SettingsSaveStatus;
 
-type DetectedApp = {
-  app_name: string;
-  process_name: string;
-  source: string;
+type TaskMemoryStep = {
+  step_id: string;
+  label: string;
+  summary: string;
+  status: StepAssignment["status"];
+  first_seen_at: string;
+  last_seen_at: string;
+  sample_count: number;
+  evidence_sample_ids: string[];
+  facts: string[];
 };
 
-type AppPermission = {
-  id: string;
-  app_name: string;
-  process_name: string;
-  monitor_enabled: boolean;
-  user_confirmed: boolean;
-  discovery_source: string;
-  discovered_at: string;
+type TaskMemoryTask = {
+  task_id: string;
+  label: string;
+  scope: TaskAssignment["task_scope"];
+  relation_to_main_task: TaskAssignment["relation_to_main_task"];
+  first_seen_at: string;
+  last_seen_at: string;
+  sample_count: number;
+  confidence: number;
+  status: "active" | "inactive";
+  steps: TaskMemoryStep[];
+};
+
+type TaskMemory = {
+  updatedAt: string | null;
+  tasks: TaskMemoryTask[];
+  events: Array<{
+    sampleId: string;
+    recordedAt: string;
+    taskId: string;
+    stepId: string;
+    action: string;
+  }>;
 };
 
 type StoredAppState = {
@@ -147,6 +185,7 @@ type StoredAppState = {
   contextSamples: ContextSampleRecord[];
   analysisResults: AnalysisResult[];
   testTaskAnalysisRuns: TestTaskAnalysisRun[];
+  taskMemory: TaskMemory;
   summary: TaskSummary | null;
 };
 
@@ -180,6 +219,7 @@ type ActivityLogRecord = {
   status?: string;
   screenshotAnalysis?: string;
   screenshotDetailText?: string;
+  screenshotHoverPoint?: string;
   analysisBody?: string;
 };
 
@@ -243,61 +283,20 @@ type ContextSampleTrigger =
   | "interval_fallback"
   | InputEventRecord["source"];
 
-type ActivityLogTableRow = {
-  id: string;
-  time: string;
-  app: string;
-  displayApp: string;
-  rawApp: string;
-  rawWindowTitle: string;
-  windowTitle: string;
-  screenshot: string;
-  content: string;
-  appBreak: boolean;
-  muted: boolean;
-  timestampMs?: number;
-};
-
 type ContextSampleRecord = {
   id: string;
   recordedAt: string;
   trigger: ContextSampleTrigger;
-  taskGoal: string;
+  taskGoal: string | null;
+  taskGoalSource: "explicit_main_task" | "none";
   window: ForegroundWindowSnapshot | null;
   screenshot: ScreenshotCaptureResult | null;
   screenshotAnalysisStatus?: AnalysisStatus;
   taskAnalysisStatus?: AnalysisStatus;
   screenshotAnalysis?: string;
   screenshotDetailText?: string;
+  screenshotHoverPoint?: string;
   error?: string;
-};
-
-type TestTaskAnalysisStatus = "queued" | "running" | "done" | "failed";
-
-type TestTaskAnalysisItem = {
-  id: string;
-  sampleId: string;
-  recordedAt: string;
-  screenshotFileName: string;
-  appName: string;
-  windowTitle: string;
-  status: TestTaskAnalysisStatus;
-  attempts: number;
-  rawResponse?: string;
-  parsedBody?: string;
-  error?: string;
-  startedAt?: string;
-  finishedAt?: string;
-};
-
-type TestTaskAnalysisRun = {
-  id: string;
-  name: string;
-  start: string;
-  end: string;
-  createdAt: string;
-  status: TestTaskAnalysisStatus;
-  items: TestTaskAnalysisItem[];
 };
 
 const storageKey = "superguider-demo-state";
@@ -321,6 +320,7 @@ const defaultStoredState: StoredAppState = {
   contextSamples: [],
   analysisResults: [],
   testTaskAnalysisRuns: [],
+  taskMemory: { updatedAt: null, tasks: [], events: [] },
   summary: null,
 };
 
@@ -330,219 +330,6 @@ const screenshotIntervalCheckMs = 30 * 1000;
 const idleAutoCapturePauseMs = 5 * 60 * 1000;
 const altTabPostEndSuppressMs = 1200;
 const altTabWatchdogMs = 2500;
-
-function appPermissionId(app: Pick<AppPermission, "app_name" | "process_name">) {
-  const processName = app.process_name.trim().toLowerCase();
-  if (processName) {
-    return `process:${processName}`;
-  }
-
-  return `app:${app.app_name.trim().toLowerCase()}`;
-}
-
-function normalizeAppPermissionRecord(permission: AppPermission): AppPermission {
-  const appName =
-    permission.app_name.trim() || permission.process_name.trim() || "未知应用";
-  const processName = permission.process_name.trim();
-  return {
-    ...permission,
-    id: appPermissionId({ app_name: appName, process_name: processName }),
-    app_name: appName,
-    process_name: processName,
-  };
-}
-
-function createAppPermission(
-  app: DetectedApp,
-  userConfirmed: boolean,
-): AppPermission {
-  const basePermission = {
-    app_name: app.app_name || app.process_name || "未知应用",
-    process_name: app.process_name,
-    monitor_enabled: shouldEnableMonitoringByDefault(app),
-    user_confirmed: userConfirmed,
-    discovery_source: app.source,
-    discovered_at: nowLabel(),
-  };
-
-  return {
-    id: appPermissionId(basePermission),
-    ...basePermission,
-  };
-}
-
-function mergeAppPermissions(
-  currentPermissions: AppPermission[],
-  detectedApps: DetectedApp[],
-) {
-  const merged: AppPermission[] = [];
-
-  for (const currentPermission of currentPermissions) {
-    mergePermissionIntoList(merged, currentPermission);
-  }
-
-  for (const detectedApp of detectedApps) {
-    const permission = createAppPermission(detectedApp, true);
-    mergePermissionIntoList(merged, permission);
-  }
-
-  return sortAppPermissions(merged);
-}
-
-function mergePermissionIntoList(
-  permissions: AppPermission[],
-  nextPermission: AppPermission,
-) {
-  const normalizedNextPermission = normalizeAppPermissionRecord(nextPermission);
-  const existingIndex = permissions.findIndex((permission) =>
-    areSameAppPermission(permission, normalizedNextPermission),
-  );
-
-  if (existingIndex === -1) {
-    permissions.push(normalizedNextPermission);
-    return;
-  }
-
-  const existingPermission = normalizeAppPermissionRecord(permissions[existingIndex]);
-  const shouldAdoptNextDecision =
-    !existingPermission.user_confirmed && normalizedNextPermission.user_confirmed;
-  permissions[existingIndex] = normalizeAppPermissionRecord({
-    ...existingPermission,
-    id: normalizedNextPermission.process_name
-      ? normalizedNextPermission.id
-      : existingPermission.id,
-    app_name: existingPermission.app_name || normalizedNextPermission.app_name,
-    process_name:
-      existingPermission.process_name || normalizedNextPermission.process_name,
-    discovery_source: mergeDiscoverySource(
-      existingPermission.discovery_source,
-      normalizedNextPermission.discovery_source,
-    ),
-    monitor_enabled: shouldAdoptNextDecision
-      ? normalizedNextPermission.monitor_enabled
-      : existingPermission.monitor_enabled,
-    user_confirmed: existingPermission.user_confirmed || normalizedNextPermission.user_confirmed,
-  });
-}
-
-function areSameAppPermission(left: AppPermission, right: AppPermission) {
-  if (left.id === right.id) {
-    return true;
-  }
-
-  const leftAliases = appNameAliases(left);
-  const rightAliases = appNameAliases(right);
-  return [...leftAliases].some((alias) => rightAliases.has(alias));
-}
-
-function mergeDiscoverySource(left: string, right: string) {
-  const sources = new Set([...left.split("+"), ...right.split("+")].filter(Boolean));
-  return [...sources].join("+");
-}
-
-function permissionFromSnapshot(snapshot: ForegroundWindowSnapshot) {
-  return createAppPermission(
-    {
-      app_name: snapshot.app_name,
-      process_name: snapshot.process_name,
-      source: "foreground_window_runtime",
-    },
-    false,
-  );
-}
-
-function sortAppPermissions(permissions: AppPermission[]) {
-  return [...permissions].sort((left, right) =>
-    Number(right.monitor_enabled) - Number(left.monitor_enabled) ||
-    Number(left.user_confirmed) - Number(right.user_confirmed) ||
-    left.app_name.toLowerCase().localeCompare(right.app_name.toLowerCase()),
-  );
-}
-
-function normalizeAppPermissions(permissions: AppPermission[]) {
-  const merged: AppPermission[] = [];
-  for (const permission of permissions) {
-    mergePermissionIntoList(merged, permission);
-  }
-
-  return sortAppPermissions(merged);
-}
-
-function aiSettingsFingerprint(settings: Settings, apiKey: string) {
-  return JSON.stringify({
-    apiUrl: settings.apiUrl,
-    apiKey,
-    screenshotModel: settings.screenshotModel,
-    navigationModel: settings.navigationModel,
-  });
-}
-
-function appPermissionsFingerprint(appPermissions: AppPermission[]) {
-  return JSON.stringify({
-    appPermissions: normalizeAppPermissions(appPermissions),
-  });
-}
-
-function shouldEnableMonitoringByDefault(app: DetectedApp) {
-  if (isWeChatApp(app)) {
-    return false;
-  }
-
-  return [
-    "public_desktop",
-    "user_desktop",
-    "taskbar_pinned",
-  ].includes(app.source);
-}
-
-function appNameAliases(app: Pick<AppPermission, "app_name" | "process_name">) {
-  const appName = app.app_name.trim();
-  const processName = app.process_name.trim();
-  return new Set(
-    [
-      appName,
-      processName,
-      processName.replace(/\.exe$/i, ""),
-      appName.replace(/\s*-\s*快捷方式$/i, ""),
-      appName.replace(/\s+shortcut$/i, ""),
-    ]
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
-function isWeChatApp(app: Pick<AppPermission, "app_name" | "process_name">) {
-  const value = `${app.app_name} ${app.process_name}`.toLowerCase();
-  return value.includes("wechat") || value.includes("weixin") || value.includes("微信");
-}
-
-function canSampleApp(snapshot: ForegroundWindowSnapshot, permissions: AppPermission[]) {
-  const permission = findAppPermission(snapshot, permissions);
-  return Boolean(permission?.monitor_enabled && permission.user_confirmed);
-}
-
-function findAppPermission(
-  snapshot: ForegroundWindowSnapshot,
-  permissions: AppPermission[],
-) {
-  const id = appPermissionId({
-    app_name: snapshot.app_name,
-    process_name: snapshot.process_name,
-  });
-  const snapshotAliases = appNameAliases({
-    app_name: snapshot.app_name,
-    process_name: snapshot.process_name,
-  });
-
-  return permissions.find((item) => {
-    if (item.id === id) {
-      return true;
-    }
-
-    const itemAliases = appNameAliases(item);
-    return [...snapshotAliases].some((alias) => itemAliases.has(alias));
-  });
-}
 
 const referencePlan: ReferencePlan = {
   scenario: "create_reference_task_plan",
@@ -577,6 +364,7 @@ const notificationScenarios: Record<string, NotificationScenario> = {
     notify_type: "stuck",
     body: "你在通知区域图标和窗口监听问题上停留了一段时间。已经做过搜索示例、修改初始化代码、重启验证这些尝试。可以先用最小 tray 示例单独验证，或者暂时用主窗口按钮代替入口，把后面的提示闭环先跑起来。",
     button: "none",
+    reason: "\u672c\u5730\u8c03\u8bd5\u6309\u94ae\uff1a\u6a21\u62df\u5361\u4f4f\u63d0\u9192\u3002",
   },
   offTrack: {
     scenario: "off_track_notification",
@@ -584,6 +372,7 @@ const notificationScenarios: Record<string, NotificationScenario> = {
     notify_type: "off_track",
     body: "当前主要在看桌面宠物动画资源。如果目标是今天 18:00 前跑通 SuperGuider 最小 Demo，可能先完成任务分析到提示气泡的闭环会更快。",
     button: "actually_related",
+    reason: "\u672c\u5730\u8c03\u8bd5\u6309\u94ae\uff1a\u6a21\u62df\u504f\u79bb\u4e3b\u4efb\u52a1\u63d0\u9192\u3002",
   },
   overOptimizing: {
     scenario: "over_optimizing_notification",
@@ -591,6 +380,7 @@ const notificationScenarios: Record<string, NotificationScenario> = {
     notify_type: "over_optimizing",
     body: "当前可能已经进入发光球视觉细节优化了。但任务分析到气泡展示和自动消失记录还没有完整跑通，建议先用朴素样式验证一次主闭环。",
     button: "important_detail",
+    reason: "\u672c\u5730\u8c03\u8bd5\u6309\u94ae\uff1a\u6a21\u62df\u8fc7\u5ea6\u4f18\u5316\u63d0\u9192\u3002",
   },
   noNotify: {
     scenario: "do_not_prompt_this_time",
@@ -598,6 +388,7 @@ const notificationScenarios: Record<string, NotificationScenario> = {
     notify_type: "none",
     body: "",
     button: "none",
+    reason: "\u672c\u5730\u8c03\u8bd5\u6309\u94ae\uff1a\u6a21\u62df\u4e0d\u63d0\u9192\u7ed3\u679c\u3002",
   },
 };
 
@@ -757,16 +548,12 @@ function emptyQueueRetryState(): QueueRetryState {
 }
 
 function pendingAnalysisResult(sample: ContextSampleRecord): AnalysisResult {
-  return validateAnalysisResult({
-    recordedAt: nowLabel(),
-    scenario: "screenshot_waiting_for_analysis",
-    should_notify: false,
-    notify_type: "none",
-    body: "截图未分析",
+  return createLocalAnalysisResult(sample, {
+    stepLabel: "截图理解等待中",
+    stepSummary: "截图样本已经记录，但截图理解还没有完成。",
     basis: sample.screenshot?.file_name
       ? `截图文件：${sample.screenshot.file_name}`
       : "截图已进入待分析流程。",
-    button: "none",
   });
 }
 
@@ -829,391 +616,80 @@ function activitySampleLine(
   const screenshotText = screenshot
     ? `截图 ${screenshotLabel(screenshot)}`
     : `未截图${fallbackStatus ? `（${fallbackStatus}）` : ""}`;
-  const analysisText = analysis.body || analysis.scenario || "待分析";
+  const analysisText = analysisSummaryText(analysis) || "待分析";
   return `${recordedAt}，${appName}，${windowTitle}，${screenshotText}，内容 ${analysisText}`;
 }
 
-function parseActivityLogTable(content: string): ActivityLogTableRow[] {
-  const rows: ActivityLogTableRow[] = [];
-  let lastRawApp = "";
-  let lastShownWindow = "";
-  let lastTimestampMs: number | undefined;
-
-  content.split(/\r?\n/).forEach((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("格式：")) {
-      return;
-    }
-
-    if (trimmed.startsWith("，")) {
-      const sample = parseActivitySampleLine(trimmed);
-      if (!sample.screenshot) {
-        rows.push({
-          id: `sample-${index}`,
-          time: "",
-          app: "",
-          displayApp: "",
-          rawApp: "",
-          rawWindowTitle: "",
-          windowTitle: "",
-          screenshot: "",
-          content: sample.content,
-          appBreak: false,
-          muted: sample.muted,
-          timestampMs: lastTimestampMs,
-        });
-        return;
-      }
-
-      const inferred = inferActivityTargetFromScreenshotName(sample.screenshot);
-      if (isExplorerLogShellSurface(inferred.app, inferred.windowTitle)) {
-        return;
-      }
-
-      const time = inferActivityTimeFromScreenshotName(sample.screenshot);
-      const timestampMs = time ? activityLogTimeToTimestamp(time) : lastTimestampMs;
-      const display = displayActivityTarget(inferred.app, inferred.windowTitle);
-      const rawAppKey = display.app.toLowerCase();
-      const appBreak = Boolean(display.app) && rawAppKey !== lastRawApp;
-      const app = rawAppKey === lastRawApp ? "" : display.app;
-      const windowTitle =
-        rawAppKey === lastRawApp && display.windowTitle === lastShownWindow
-          ? ""
-          : display.windowTitle;
-
-      rows.push({
-        id: `sample-${index}`,
-        time,
-        app,
-        displayApp: display.app,
-        rawApp: inferred.app,
-        rawWindowTitle: inferred.windowTitle,
-        windowTitle,
-        screenshot: sample.screenshot,
-        content: sample.content,
-        appBreak,
-        muted: sample.muted,
-        timestampMs,
-      });
-      if (display.app) {
-        lastRawApp = rawAppKey;
-        lastShownWindow = display.windowTitle;
-      }
-      return;
-    }
-
-    const [
-      time = "",
-      rawApp = "",
-      rawWindow = "",
-      rawScreenshot = "",
-      ...rawContentParts
-    ] = splitActivitySwitchLine(trimmed);
-    const rawContent = rawContentParts.join("，");
-    const timestampMs = activityLogTimeToTimestamp(time);
-    if (isExplorerLogShellSurface(rawApp, rawWindow)) {
-      lastTimestampMs = timestampMs ?? lastTimestampMs;
-      return;
-    }
-
-    const display = displayActivityTarget(rawApp, rawWindow);
-    const rawAppKey = display.app.toLowerCase();
-    const appBreak = rows.length > 0 && rawAppKey !== lastRawApp;
-    const app = rawAppKey === lastRawApp ? "" : display.app;
-    const windowTitle =
-      rawAppKey === lastRawApp && display.windowTitle === lastShownWindow
-        ? ""
-        : display.windowTitle;
-    const screenshot = parseActivityScreenshotText(rawScreenshot);
-    const content = mergeActivityContent(
-      display.content,
-      parseActivityContentText(rawContent),
-    );
-    if (!app && !windowTitle && !content && !screenshot) {
-      return;
-    }
-
-    rows.push({
-      id: `switch-${index}`,
-      time,
-      app,
-      displayApp: display.app,
-      rawApp,
-      rawWindowTitle: rawWindow,
-      windowTitle,
-      screenshot,
-      content,
-      appBreak,
-      muted: isAppPermissionBlockText(`${rawScreenshot} ${rawContent}`),
-      timestampMs,
-    });
-
-    lastRawApp = rawAppKey;
-    lastShownWindow = display.windowTitle;
-    lastTimestampMs = timestampMs;
+function createLocalAnalysisResult(
+  sample: ContextSampleRecord,
+  overrides: {
+    taskLabel?: string;
+    taskScope?: TaskAssignment["task_scope"];
+    stepLabel: string;
+    stepSummary: string;
+    scenario?: NotificationDecision["scenario"];
+    shouldNotify?: boolean;
+    notifyType?: NotificationDecision["notify_type"];
+    body?: string;
+    button?: NotifyButton;
+    basis: string;
+  },
+): AnalysisResult {
+  const taskLabel = overrides.taskLabel || sample.taskGoal || "\u672A\u5F52\u7C7B\u4EFB\u52A1";
+  const taskScope =
+    overrides.taskScope ??
+    (sample.taskGoalSource === "explicit_main_task" ? "explicit_main_task" : "implicit_side_tasks");
+  return validateAnalysisResult({
+    recordedAt: nowLabel(),
+    mode: sample.taskGoalSource === "explicit_main_task" ? "task_tracking" : "silent_companion",
+    batch_summary: `${taskLabel} / ${overrides.stepLabel}`,
+    results: [
+      {
+        task_assignment: {
+          decision: "uncertain",
+          task_id: normalizeMemoryId("task", taskLabel),
+          task_label: taskLabel,
+          task_scope: taskScope,
+          relation_to_main_task:
+            taskScope === "explicit_main_task" ? "direct" : "unknown",
+          confidence: 0.4,
+          evidence: overrides.basis,
+        },
+        step_assignment: {
+          decision: "uncertain",
+          step_id: normalizeMemoryId("step", overrides.stepLabel),
+          step_label: overrides.stepLabel,
+          step_summary: overrides.stepSummary,
+          status: "unknown",
+          confidence: 0.4,
+          evidence: overrides.basis,
+        },
+        memory_update: {
+          action: "uncertain_no_update",
+          new_facts: [],
+          reason: "\u672C\u5730\u515C\u5E95\u5206\u6790\u7ED3\u679C\uFF0C\u4E0D\u66F4\u65B0\u957F\u671F\u4EFB\u52A1\u8BB0\u5FC6\u3002",
+        },
+        basis: overrides.basis,
+      },
+    ],
+    notification: {
+      should_notify: overrides.shouldNotify ?? false,
+      scenario: overrides.scenario ?? "do_not_prompt_this_time",
+      notify_type: overrides.notifyType ?? "none",
+      body: overrides.body ?? "",
+      button: overrides.button ?? "none",
+      reason: overrides.basis,
+    },
+    basis: overrides.basis,
   });
-
-  return rows;
-}
-
-function splitActivitySwitchLine(line: string) {
-  return line.split("，");
-}
-
-function parseActivitySampleLine(line: string) {
-  const content = line.replace(/^，/, "");
-  const separator = content.indexOf("，");
-  const screenshot = separator === -1 ? content : content.slice(0, separator);
-  const contentText = separator === -1 ? "" : content.slice(separator + 1);
-
-  if (isAppPermissionBlockText(`${screenshot} ${contentText}`)) {
-    return {
-      screenshot: "",
-      content: "",
-      muted: true,
-    };
-  }
-
-  return {
-    screenshot: parseActivityScreenshotText(screenshot),
-    content: parseActivityContentText(contentText),
-    muted: false,
-  };
-}
-
-function parseActivityScreenshotText(text: string) {
-  return text.replace(/^截图\s*/, "") || "";
-}
-
-function parseActivityContentText(text: string) {
-  return text.replace(/^(分析|内容)\s*/, "") || "";
-}
-
-function inferActivityTimeFromScreenshotName(screenshot: string) {
-  const match = screenshot.match(/(\d{8})-(\d{6})-\d{3}/);
-  if (!match) {
-    return "";
-  }
-
-  const [, date, time] = match;
-  return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)} ${time.slice(
-    0,
-    2,
-  )}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
-}
-
-function inferActivityTargetFromScreenshotName(screenshot: string) {
-  const fileName = screenshot.split(/[\\/]/).pop() ?? screenshot;
-  const stem = fileName.replace(/\.[^.]+$/, "");
-  const modernMatch = stem.match(/^\d{8}-\d{6}-\d{3}_(.+)$/);
-  const body = modernMatch?.[1] ?? stem;
-  const [app = "", ...windowParts] = body.split("_");
-
-  return {
-    app: app || "Unknown App",
-    windowTitle: windowParts.join("_").replace(/_/g, " ") || "",
-  };
-}
-
-function mergeActivityContent(current: string, next: string) {
-  const currentContent = current.trim();
-  const nextContent = next.trim();
-  if (!currentContent) {
-    return nextContent;
-  }
-  if (!nextContent) {
-    return currentContent;
-  }
-  return `${currentContent}\n${nextContent}`;
-}
-
-function isAppPermissionBlockStatus(status?: string) {
-  return isAppPermissionBlockText(status ?? "");
-}
-
-function isAppPermissionBlockText(text: string) {
-  return [
-    "已在设置中关闭监控",
-    "尚未在设置中确认允许监控",
-    "是新发现应用",
-    "已跳过截图",
-  ].some((keyword) => text.includes(keyword));
-}
-
-function displayActivityTarget(rawApp: string, rawWindow: string) {
-  const app = rawApp.trim();
-  const windowTitle = normalizeWindowTitle(rawWindow);
-  const appKey = app.toLowerCase();
-
-  if (appKey === "explorer" || appKey === "explorer.exe") {
-    if (isExplorerShellSurface(windowTitle)) {
-      return { app: "桌面", windowTitle: "", content: "" };
-    }
-
-    return { app: "文件夹", windowTitle: compactActivityTitle(windowTitle), content: "" };
-  }
-
-  if (isTerminalApp(appKey)) {
-    return { app: "终端", windowTitle: "", content: compactActivityTitle(windowTitle, 88) };
-  }
-
-  if (isBrowserApp(appKey)) {
-    return {
-      app: browserDisplayName(appKey),
-      windowTitle: compactActivityTitle(normalizeBrowserWindowTitle(windowTitle, appKey), 120),
-      content: "",
-    };
-  }
-
-  const displayApp =
-    appKey === "notepad" || appKey === "notepad.exe" ? "记事本" : app;
-  const normalizedApp = displayApp.trim().toLowerCase();
-  const normalizedWindow = windowTitle.trim().toLowerCase();
-
-  return {
-    app: displayApp,
-    windowTitle:
-      normalizedApp && normalizedApp === normalizedWindow
-        ? ""
-        : compactActivityTitle(windowTitle),
-    content: "",
-  };
-}
-
-function normalizeWindowTitle(value: string) {
-  const title = value.trim();
-  return title === "无具体窗口" || title === "Untitled window" ? "" : title;
-}
-
-function isExplorerSystemWindowTitle(title: string) {
-  const normalized = title.trim().toLowerCase();
-  return [
-    "任务切换",
-    "task switching",
-    "program manager",
-  ].includes(normalized);
-}
-
-function isExplorerShellSurface(title: string) {
-  return !title || isExplorerSystemWindowTitle(title);
-}
-
-function isExplorerLogShellSurface(rawApp: string, rawWindow: string) {
-  const appKey = rawApp.trim().toLowerCase();
-  return (
-    (appKey === "explorer" || appKey === "explorer.exe") &&
-    isExplorerShellSurface(normalizeWindowTitle(rawWindow))
-  );
-}
-
-function isShellOnlyForegroundSnapshot(snapshot: ForegroundWindowSnapshot) {
-  const processName = snapshot.process_name.trim().toLowerCase();
-  const appName = snapshot.app_name.trim().toLowerCase();
-  if (
-    processName !== "explorer.exe" &&
-    processName !== "explorer" &&
-    appName !== "explorer.exe" &&
-    appName !== "explorer"
-  ) {
-    return false;
-  }
-
-  return !snapshot.folder_path?.trim() && isExplorerShellSurface(snapshot.window_title);
-}
-
-function isTerminalApp(appKey: string) {
-  return [
-    "cmd",
-    "cmd.exe",
-    "powershell",
-    "powershell.exe",
-    "pwsh",
-    "pwsh.exe",
-    "windowsterminal",
-    "windowsterminal.exe",
-    "wt",
-    "wt.exe",
-  ].includes(appKey);
-}
-
-function isBrowserApp(appKey: string) {
-  return [
-    "chrome",
-    "chrome.exe",
-    "firefox",
-    "firefox.exe",
-    "msedge",
-    "msedge.exe",
-    "edge",
-    "edge.exe",
-    "brave",
-    "brave.exe",
-  ].includes(appKey);
-}
-
-function browserDisplayName(appKey: string) {
-  if (appKey === "firefox" || appKey === "firefox.exe") {
-    return "Firefox";
-  }
-
-  if (
-    appKey === "msedge" ||
-    appKey === "msedge.exe" ||
-    appKey === "edge" ||
-    appKey === "edge.exe"
-  ) {
-    return "Edge";
-  }
-
-  if (appKey === "brave" || appKey === "brave.exe") {
-    return "Brave";
-  }
-
-  return "Chrome";
-}
-
-function normalizeBrowserWindowTitle(title: string, appKey: string) {
-  const suffixes =
-    appKey === "firefox" || appKey === "firefox.exe"
-      ? [" - Mozilla Firefox", " — Mozilla Firefox"]
-      : appKey === "msedge" ||
-          appKey === "msedge.exe" ||
-          appKey === "edge" ||
-          appKey === "edge.exe"
-        ? [" - Microsoft Edge", " — Microsoft Edge"]
-        : appKey === "brave" || appKey === "brave.exe"
-          ? [" - Brave", " — Brave"]
-          : [" - Google Chrome", " — Google Chrome"];
-
-  let normalized = title.trim();
-  for (const suffix of suffixes) {
-    if (normalized.endsWith(suffix)) {
-      normalized = normalized.slice(0, -suffix.length).trim();
-      break;
-    }
-  }
-
-  return normalized;
-}
-
-function compactActivityTitle(value: string, maxLength = 120) {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, maxLength).trimEnd()}...`;
 }
 
 function analyzeContextSample(sample: ContextSampleRecord): AnalysisResult {
   if (sample.error) {
-    return validateAnalysisResult({
-      recordedAt: nowLabel(),
-      scenario: "context_sample_failed",
-      should_notify: false,
-      notify_type: "none",
-      body: "这次上下文采样失败，先不打扰用户。",
+    return createLocalAnalysisResult(sample, {
+      stepLabel: "采样失败",
+      stepSummary: "这次上下文采样失败，不能可靠归纳任务阶段。",
       basis: sample.error,
-      button: "none",
     });
   }
 
@@ -1242,26 +718,26 @@ function analyzeContextSample(sample: ContextSampleRecord): AnalysisResult {
     surfaceText.includes(keyword),
   );
 
-  if (sample.taskGoal !== "未开始任务" && looksDistracting) {
-    return validateAnalysisResult({
-      recordedAt: nowLabel(),
-      scenario: "local_off_track_detected",
-      should_notify: true,
-      notify_type: "off_track",
+  if (sample.taskGoalSource === "explicit_main_task" && sample.taskGoal && looksDistracting) {
+    return createLocalAnalysisResult(sample, {
+      taskLabel: sample.taskGoal,
+      taskScope: "explicit_main_task",
+      stepLabel: "疑似偏离主任务",
+      stepSummary: `当前窗口 ${appName} / ${windowTitle} 可能不属于主任务。`,
+      scenario: "off_track_notification",
+      shouldNotify: true,
+      notifyType: "off_track",
       body: `当前窗口看起来可能和任务目标关系不大：${appName} / ${windowTitle}。如果你正在执行「${sample.taskGoal}」，可以先回到任务主线。`,
-      basis: `${appName} / ${windowTitle} / 截图状态：${screenshotStatus}${screenshotBasis}`,
       button: "actually_related",
+      basis: `${appName} / ${windowTitle} / 截图状态：${screenshotStatus}${screenshotBasis}`,
     });
   }
 
-  return validateAnalysisResult({
-    recordedAt: nowLabel(),
-    scenario: "context_sample_checked",
-    should_notify: false,
-    notify_type: "none",
-    body: "已完成一次上下文采样。本地分析层暂不主动提示，只记录判断依据。",
+  return createLocalAnalysisResult(sample, {
+    taskLabel: sample.taskGoalSource === "explicit_main_task" && sample.taskGoal ? sample.taskGoal : `${appName} \u6D3B\u52A8`,
+    stepLabel: "普通活动记录",
+    stepSummary: `当前记录聚合到 ${appName} / ${windowTitle} 这一段活动。`,
     basis: `${appName} / ${windowTitle} / 截图状态：${screenshotStatus}${screenshotBasis}`,
-    button: "none",
   });
 }
 
@@ -1294,38 +770,288 @@ function normalizeStoredState(state: Partial<StoredAppState>): StoredAppState {
     contextSamples: state.contextSamples ?? [],
     analysisResults: state.analysisResults ?? [],
     testTaskAnalysisRuns: state.testTaskAnalysisRuns ?? [],
+    taskMemory: state.taskMemory ?? defaultStoredState.taskMemory,
     summary: state.summary ?? null,
   };
 }
 
-function updateTestTaskAnalysisItem(
-  runs: TestTaskAnalysisRun[],
-  runId: string,
-  itemId: string,
-  updates: Partial<TestTaskAnalysisItem>,
-): TestTaskAnalysisRun[] {
-  return runs.map((run) => {
-    if (run.id !== runId) {
-      return run;
-    }
+function buildReferenceTaskContextForScreenshot(
+  _sample: ContextSampleRecord,
+): {
+  currentActivityGuess: string;
+  currentStageGuess: string;
+  source: string;
+  note: string;
+} {
+  // 预留入口：后续这里接入任务分析模型的阶段判断结果。
+  // 截图理解只能把这段信息当参考，不能把它当作截图事实。
+  return {
+    currentActivityGuess: "任务分析模块暂未启用，暂无刚才在做什么的可靠判断。",
+    currentStageGuess: "任务分析模块暂未启用，暂无当前阶段判断。",
+    source: "placeholder_task_analysis_context",
+    note: "仅供参考；截图分析应优先依据图片本身，不要把这里的占位内容当作事实。",
+  };
+}
 
-    const items = run.items.map((item) =>
-      item.id === itemId ? { ...item, ...updates } : item,
-    );
-    const status: TestTaskAnalysisStatus = items.some((item) => item.status === "running")
-      ? "running"
-      : items.some((item) => item.status === "queued")
-        ? "queued"
-        : items.some((item) => item.status === "failed")
-          ? "failed"
-          : "done";
 
+function buildTaskAnalysisContext(
+  samples: ContextSampleRecord[],
+  mode: AppMode,
+  activeTask: Task | null,
+  memory: TaskMemory,
+) {
+  const explicitMainTask = activeTask
+    ? {
+        goal: activeTask.goal,
+        deadline: activeTask.deadline,
+        notes: activeTask.notes,
+        startedAt: activeTask.startedAt ?? null,
+      }
+    : null;
+
+  return {
+    productMode: mode,
+    taskRules: {
+      first: "先判断这条截图样本应该聚合到哪一个任务。用户一天会并行多个任务，不要默认都属于同一件事。",
+      second: "再判断它属于该任务的哪一个步骤或阶段，方便后续按步骤整理截图信息。",
+      taskTrackingMode: "任务导航模式下，用户明确填写的任务是 explicit_main_task；其他窗口活动如果不是为这个任务服务，就是 implicit_side_tasks。",
+      silentCompanionMode: "静默陪伴模式下没有用户明确主任务，所有任务都按 implicit_side_tasks 处理。",
+    },
+    explicitMainTask,
+    taskMemory: taskMemoryPreview(memory),
+    currentBatch: {
+      sampleCount: samples.length,
+      startedAt: samples[0]?.recordedAt ?? "",
+      endedAt: samples[samples.length - 1]?.recordedAt ?? "",
+      samples,
+    },
+    notificationTemplates: [
+      {
+        scenario: "stuck_notification",
+        notify_type: "stuck",
+        button: "none",
+        when: "用户在同一任务步骤反复尝试、报错、搜索或停留，且可以给出具体下一步。",
+      },
+      {
+        scenario: "off_track_notification",
+        notify_type: "off_track",
+        button: "actually_related",
+        when: "任务导航模式下，当前活动明显偏离 explicit_main_task，且提醒能帮助回到主线。",
+      },
+      {
+        scenario: "over_optimizing_notification",
+        notify_type: "over_optimizing",
+        button: "important_detail",
+        when: "用户在细节上过度打磨，影响完成当前阶段闭环，且可以指出更小的验证动作。",
+      },
+      {
+        scenario: "do_not_prompt_this_time",
+        notify_type: "none",
+        button: "none",
+        when: "证据不足、只是正常推进、只是复述截图中已经直接显示的信息、或者没有具体有用建议。",
+      },
+    ],
+    outputPolicy: {
+      noGenericNagging: "不要把截图里已经直接告知用户的信息改写成冒泡提示；这类信息只能放进归档依据。",
+      concreteOnly: "任务归属和阶段归属必须始终填写；body 只有在 should_notify=true 时才写给用户看的具体建议，否则 body 留空或写非常短的归档说明。",
+      useOnlyTemplates: "scenario、notify_type、button 必须从 notificationTemplates 中选择，不能自造模板。",
+    },
+  };
+}
+
+
+function analysisBasisText(analysis: AnalysisResult) {
+  return analysis.basis || analysis.notification.reason;
+}
+
+function analysisSummaryText(analysis: AnalysisResult) {
+  const items = analysis.results
+    .map((item) => `${item.task_assignment.task_label} / ${item.step_assignment.step_label}`)
+    .join("\uFF1B");
+  const notification = analysis.notification.should_notify
+    ? `\uFF1B\u63D0\u793A\uFF1A${analysis.notification.body}`
+    : "\uFF1B\u4E0D\u63D0\u793A";
+  return `${analysis.batch_summary || items}${notification}`;
+}
+
+function normalizeMemoryId(prefix: string, value: string) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_\-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return normalized || createRecordId(prefix);
+}
+
+function taskMemoryPreview(memory: TaskMemory) {
+  return {
+    updatedAt: memory.updatedAt,
+    tasks: memory.tasks.slice(0, 12).map((task) => ({
+      task_id: task.task_id,
+      label: task.label,
+      scope: task.scope,
+      relation_to_main_task: task.relation_to_main_task,
+      last_seen_at: task.last_seen_at,
+      sample_count: task.sample_count,
+      confidence: task.confidence,
+      steps: task.steps.slice(0, 8).map((step) => ({
+        step_id: step.step_id,
+        label: step.label,
+        summary: step.summary,
+        status: step.status,
+        last_seen_at: step.last_seen_at,
+        sample_count: step.sample_count,
+        facts: step.facts.slice(-8),
+      })),
+    })),
+  };
+}
+
+function applyTaskAnalysisToMemory(
+  memory: TaskMemory,
+  samples: ContextSampleRecord[],
+  analysis: AnalysisResult,
+): TaskMemory {
+  return analysis.results.reduce((currentMemory, item) => {
+    return applyTaskAnalysisItemToMemory(currentMemory, samples, analysis.recordedAt, item);
+  }, memory);
+}
+
+function applyTaskAnalysisItemToMemory(
+  memory: TaskMemory,
+  samples: ContextSampleRecord[],
+  recordedAt: string,
+  item: TaskAnalysisItemResult,
+): TaskMemory {
+  const sampleIds = samples.map((sample) => sample.id);
+  if (item.memory_update.action === "uncertain_no_update") {
     return {
-      ...run,
-      status,
-      items,
+      ...memory,
+      updatedAt: recordedAt,
+      events: [
+        {
+          sampleId: sampleIds.join(","),
+          recordedAt,
+          taskId: item.task_assignment.task_id,
+          stepId: item.step_assignment.step_id,
+          action: item.memory_update.action,
+        },
+        ...memory.events,
+      ].slice(0, 500),
     };
+  }
+
+  const taskId = normalizeMemoryId("task", item.task_assignment.task_id);
+  const stepId = normalizeMemoryId("step", item.step_assignment.step_id);
+  const existingTask = memory.tasks.find((task) => task.task_id === taskId);
+  const shouldCreateTask = item.task_assignment.decision === "new" || !existingTask;
+
+  const taskBase: TaskMemoryTask = shouldCreateTask
+    ? {
+        task_id: taskId,
+        label: item.task_assignment.task_label,
+        scope: item.task_assignment.task_scope,
+        relation_to_main_task: item.task_assignment.relation_to_main_task,
+        first_seen_at: recordedAt,
+        last_seen_at: recordedAt,
+        sample_count: 0,
+        confidence: item.task_assignment.confidence,
+        status: "active",
+        steps: [],
+      }
+    : existingTask;
+
+  const existingStep = taskBase.steps.find((step) => step.step_id === stepId);
+  const shouldCreateStep = item.step_assignment.decision === "new" || !existingStep;
+  const newFacts = item.memory_update.new_facts.filter((fact: string) => fact.trim());
+  const nextStep: TaskMemoryStep = shouldCreateStep
+    ? {
+        step_id: stepId,
+        label: item.step_assignment.step_label,
+        summary: item.step_assignment.step_summary,
+        status: item.step_assignment.status,
+        first_seen_at: recordedAt,
+        last_seen_at: recordedAt,
+        sample_count: samples.length,
+        evidence_sample_ids: sampleIds.slice(0, 30),
+        facts: newFacts,
+      }
+    : {
+        ...existingStep,
+        label: item.step_assignment.step_label || existingStep.label,
+        summary: item.step_assignment.step_summary || existingStep.summary,
+        status: item.step_assignment.status,
+        last_seen_at: recordedAt,
+        sample_count: existingStep.sample_count + samples.length,
+        evidence_sample_ids: [
+          ...sampleIds,
+          ...existingStep.evidence_sample_ids.filter((id) => !sampleIds.includes(id)),
+        ].slice(0, 30),
+        facts: [...existingStep.facts, ...newFacts].slice(-50),
+      };
+
+  const nextTask: TaskMemoryTask = {
+    ...taskBase,
+    label: item.task_assignment.task_label || taskBase.label,
+    scope: item.task_assignment.task_scope,
+    relation_to_main_task: item.task_assignment.relation_to_main_task,
+    last_seen_at: recordedAt,
+    sample_count: taskBase.sample_count + samples.length,
+    confidence: Math.max(taskBase.confidence, item.task_assignment.confidence),
+    status: "active",
+    steps: [
+      nextStep,
+      ...taskBase.steps.filter((step) => step.step_id !== stepId),
+    ],
+  };
+
+  return {
+    updatedAt: recordedAt,
+    tasks: [
+      nextTask,
+      ...memory.tasks.filter((task) => task.task_id !== taskId),
+    ].slice(0, 80),
+    events: [
+      {
+        sampleId: sampleIds.join(","),
+        recordedAt,
+        taskId,
+        stepId,
+        action: item.memory_update.action,
+      },
+      ...memory.events,
+    ].slice(0, 500),
+  };
+}
+
+function notificationScenarioFromAnalysis(analysis: AnalysisResult): NotificationScenario {
+  return analysis.notification;
+}
+
+
+function taskAnalysisMinuteKey(sample: ContextSampleRecord) {
+  const timestamp = activityLogTimeToTimestamp(sample.recordedAt) ?? Date.now();
+  const date = new Date(timestamp);
+  date.setSeconds(0, 0);
+  return dateTimeLabel(date);
+}
+
+function groupSamplesByAnalysisMinute(samples: ContextSampleRecord[]) {
+  const groups = new Map<string, ContextSampleRecord[]>();
+  samples.forEach((sample) => {
+    const key = taskAnalysisMinuteKey(sample);
+    groups.set(key, [...(groups.get(key) ?? []), sample]);
   });
+  return Array.from(groups.entries()).map(([minute, groupSamples]) => ({
+    minute,
+    samples: groupSamples.sort((left, right) => {
+      return (
+        (activityLogTimeToTimestamp(left.recordedAt) ?? 0) -
+        (activityLogTimeToTimestamp(right.recordedAt) ?? 0)
+      );
+    }),
+  }));
 }
 
 function App() {
@@ -1374,6 +1100,7 @@ function App() {
   const [testTaskAnalysisRuns, setTestTaskAnalysisRuns] = useState<
     TestTaskAnalysisRun[]
   >(storedState.testTaskAnalysisRuns);
+  const [taskMemory, setTaskMemory] = useState<TaskMemory>(storedState.taskMemory);
   const [summary, setSummary] = useState<TaskSummary | null>(
     storedState.summary,
   );
@@ -1566,6 +1293,7 @@ function App() {
       contextSamples,
       analysisResults,
       testTaskAnalysisRuns,
+      taskMemory,
       summary,
     };
     const stateJson = JSON.stringify(stateToStore);
@@ -1588,6 +1316,7 @@ function App() {
     contextSamples,
     analysisResults,
     testTaskAnalysisRuns,
+    taskMemory,
     summary,
   ]);
 
@@ -1773,11 +1502,9 @@ function App() {
   useEffect(() => {
     const interval = window.setInterval(() => {
       void processDueScreenshotAnalysisQueue();
-      void processTestTaskAnalysisRuns();
     }, 1000);
 
     void processDueScreenshotAnalysisQueue();
-    void processTestTaskAnalysisRuns();
 
     return () => window.clearInterval(interval);
   }, [
@@ -1787,6 +1514,20 @@ function App() {
     apiKey,
     queuePaused,
     queueRetryState,
+  ]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void processTestTaskAnalysisRuns();
+    }, 60 * 1000);
+
+    return () => window.clearInterval(interval);
+  }, [
+    testTaskAnalysisRuns,
+    contextSamples,
+    settings,
+    apiKey,
+    taskMemory,
   ]);
 
   function createTask() {
@@ -2025,7 +1766,7 @@ function App() {
         screenshotFileName: sample.screenshot?.file_name ?? undefined,
         status: sample.screenshot?.status ?? fallbackStatus,
         screenshotAnalysis: sample.screenshotAnalysis,
-        analysisBody: analysis.body,
+        analysisBody: analysisSummaryText(analysis),
       },
       activitySampleLine(
         sample.recordedAt,
@@ -2132,7 +1873,7 @@ function App() {
       nowLabel(),
       `测试任务分析 ${stage}`,
       `测试 ${run.name}`,
-      `样本 ${item.sampleId}`,
+      `\u6837\u672C ${item.sampleIds.join("\u3001")}`,
       `截图 ${item.screenshotFileName || "未截图"}`,
       `模型 ${settings.navigationModel || "未配置"}`,
       `接口 ${chatCompletionsEndpointLabel(settings.apiUrl) || "未配置"}`,
@@ -2295,11 +2036,13 @@ function App() {
       updateSampleRecord(item.sampleId, {
         screenshotAnalysis: screenshotAnalysis.summary,
         screenshotDetailText: screenshotAnalysis.detailText,
+        screenshotHoverPoint: screenshotAnalysis.hoverPoint,
         screenshotAnalysisStatus: "analyzed",
       });
       updateActivityRecord(item.sampleId, {
         screenshotAnalysis: screenshotAnalysis.summary,
         screenshotDetailText: screenshotAnalysis.detailText,
+        screenshotHoverPoint: screenshotAnalysis.hoverPoint,
         analysisBody: screenshotAnalysisText,
         status: "截图已分析",
       });
@@ -2395,7 +2138,7 @@ function App() {
   ) {
     setNotificationRecords((records) => [
       {
-        scenario: scenario.scenario,
+          scenario: scenario.scenario,
         notifyType: scenario.notify_type,
         body: scenario.body,
         result,
@@ -2430,6 +2173,8 @@ function App() {
     setRequestQueues(state.requestQueues);
     setContextSamples(state.contextSamples);
     setAnalysisResults(state.analysisResults);
+    setTestTaskAnalysisRuns(state.testTaskAnalysisRuns);
+    setTaskMemory(state.taskMemory);
     setSummary(state.summary);
     setActiveNotification(null);
   }
@@ -2564,6 +2309,7 @@ function App() {
     setContextSamples([]);
     setAnalysisResults([]);
     setTestTaskAnalysisRuns([]);
+    setTaskMemory(defaultStoredState.taskMemory);
     setSummary(null);
   }
 
@@ -2610,6 +2356,7 @@ function App() {
       throw new Error("这个时间段内没有可用于任务分析的截图样本。");
     }
 
+    const sampleGroups = groupSamplesByAnalysisMinute(samples);
     const run: TestTaskAnalysisRun = {
       id: createRecordId("test-task-analysis"),
       name: name.trim(),
@@ -2617,16 +2364,25 @@ function App() {
       end,
       createdAt: nowLabel(),
       status: "queued",
-      items: samples.map((sample) => ({
-        id: createRecordId("test-task-item"),
-        sampleId: sample.id,
-        recordedAt: sample.recordedAt,
-        screenshotFileName: sample.screenshot?.file_name ?? "",
-        appName: sample.window?.app_name ?? "未知应用",
-        windowTitle: sample.window ? readableWindowTitle(sample.window) : "",
-        status: "queued",
-        attempts: 0,
-      })),
+      items: sampleGroups.map(({ minute, samples: groupSamples }) => {
+        const firstSample = groupSamples[0];
+        const lastSample = groupSamples[groupSamples.length - 1] ?? firstSample;
+        return {
+          id: createRecordId("test-task-batch"),
+          sampleIds: groupSamples.map((sample) => sample.id),
+          recordedAt: minute,
+          endAt: lastSample.recordedAt,
+          screenshotFileName: groupSamples
+            .map((sample) => sample.screenshot?.file_name)
+            .filter(Boolean)
+            .join("\uFF1B"),
+          appName: firstSample.window?.app_name ?? "\u672A\u77E5\u5E94\u7528",
+          windowTitle: firstSample.window ? readableWindowTitle(firstSample.window) : "",
+          sampleCount: groupSamples.length,
+          status: "queued",
+          attempts: 0,
+        };
+      }),
     };
 
     setTestTaskAnalysisRuns((runs) => {
@@ -2667,14 +2423,16 @@ function App() {
       return;
     }
 
-    const sample = latestContextSamplesRef.current.find(
-      (candidate) => candidate.id === item.sampleId,
-    );
-    if (!sample) {
+    const samples = item.sampleIds
+      .map((sampleId) =>
+        latestContextSamplesRef.current.find((candidate) => candidate.id === sampleId),
+      )
+      .filter((sample): sample is ContextSampleRecord => Boolean(sample));
+    if (samples.length === 0) {
       updateTestTaskAnalysisRunsState((runs) =>
         updateTestTaskAnalysisItem(runs, run.id, item.id, {
           status: "failed",
-          error: "样本已不存在。",
+          error: "\u8FD9\u4E00\u5206\u949F\u6279\u6B21\u91CC\u7684\u6837\u672C\u5DF2\u4E0D\u5B58\u5728\u3002",
           finishedAt: nowLabel(),
         }),
       );
@@ -2698,8 +2456,12 @@ function App() {
     );
 
     try {
-      const rawResult = await requestTaskAnalysisRaw(sample);
+      const rawResult = await requestTaskAnalysisRaw(samples);
       const parsed = validateAnalysisResult(JSON.parse(rawResult));
+      setTaskMemory((memory) => applyTaskAnalysisToMemory(memory, samples, parsed));
+      if (parsed.notification.should_notify) {
+        triggerScenario(notificationScenarioFromAnalysis(parsed));
+      }
       recordApiRequestLog(
         testTaskAnalysisRequestLogLine("成功", run, item, "完整回复已保存到测试结果"),
       );
@@ -2707,7 +2469,7 @@ function App() {
         updateTestTaskAnalysisItem(runs, run.id, item.id, {
           status: "done",
           rawResponse: rawResult,
-          parsedBody: parsed.body,
+          parsedBody: analysisSummaryText(parsed),
           finishedAt: nowLabel(),
         }),
       );
@@ -2823,7 +2585,8 @@ function App() {
           id: createRecordId("sample"),
           recordedAt: nowLabel(),
           trigger,
-          taskGoal: task?.goal ?? "未开始任务",
+          taskGoal: task?.goal ?? null,
+          taskGoalSource: task ? "explicit_main_task" : "none",
           window: snapshot,
           screenshot: null,
           error: `已跳过截图：${blockReason}`,
@@ -2853,7 +2616,8 @@ function App() {
         id: createRecordId("sample"),
         recordedAt: nowLabel(),
         trigger,
-        taskGoal: task?.goal ?? "未开始任务",
+        taskGoal: task?.goal ?? null,
+        taskGoalSource: task ? "explicit_main_task" : "none",
         window: snapshot,
         screenshot,
         screenshotAnalysisStatus: "pending",
@@ -2880,7 +2644,8 @@ function App() {
         id: createRecordId("sample"),
         recordedAt: nowLabel(),
         trigger,
-        taskGoal: task?.goal ?? "未开始任务",
+        taskGoal: task?.goal ?? null,
+        taskGoalSource: task ? "explicit_main_task" : "none",
         window: null,
         screenshot: null,
         error: message,
@@ -2919,6 +2684,8 @@ function App() {
       screenshot_path: sample.screenshot.file_path,
       context_json: JSON.stringify({
         taskGoal: sample.taskGoal,
+        referenceTaskContext: buildReferenceTaskContextForScreenshot(sample),
+        taskGoalSource: sample.taskGoalSource,
         window: sample.window,
         screenshot: sample.screenshot,
       }),
@@ -2928,7 +2695,7 @@ function App() {
     });
   }
 
-  async function requestTaskAnalysisRaw(sample: ContextSampleRecord) {
+  async function requestTaskAnalysisRaw(samples: ContextSampleRecord[]) {
     if (
       !settings.apiUrl.trim() ||
       !apiKey.trim() ||
@@ -2941,7 +2708,7 @@ function App() {
       api_url: settings.apiUrl,
       api_key: apiKey,
       model: settings.navigationModel,
-      context_json: JSON.stringify(sample),
+      context_json: JSON.stringify(buildTaskAnalysisContext(samples, mode, task, taskMemory)),
       schema_json: JSON.stringify(analysisResultSchema),
     };
     return await invoke<string>("analyze_context_with_ai", {
@@ -3324,7 +3091,7 @@ function StatusPage({
                   <strong>{sample.trigger}</strong>
                   <small>{sample.recordedAt}</small>
                 </div>
-                <p>{sample.taskGoal}</p>
+                <p>{sample.taskGoal ?? "\u9759\u9ED8\u966A\u4F34\uFF1A\u65E0\u660E\u786E\u4EFB\u52A1\u76EE\u6807"}</p>
                 {sample.window && (
                   <span>
                     {sample.window.app_name} / {sample.window.window_title}
@@ -3364,10 +3131,10 @@ function StatusPage({
           <ul className="analysis-list">
             {analysisResults.slice(0, 3).map((result, index) => (
               <li key={`${result.recordedAt}-${index}`}>
-                <strong>{result.should_notify ? "提示" : "不提示"}</strong>
-                <span>{result.notify_type}</span>
-                <p>{result.body}</p>
-                <small>{result.basis}</small>
+                <strong>{result.notification.should_notify ? "提示" : "不提示"}</strong>
+                <span>{result.notification.notify_type}</span>
+                <p>{analysisSummaryText(result)}</p>
+                <small>{analysisBasisText(result)}</small>
               </li>
             ))}
           </ul>
